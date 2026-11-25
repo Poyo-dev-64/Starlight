@@ -1029,20 +1029,13 @@ function tick() {
   }
 
   const nowMs = performance.now();
-  if (state.weTargetFps > 0 && state.weTargetFps < 120 && state.lastRenderMs > 0) {
-    const minInterval = 1000 / state.weTargetFps;
-    if (nowMs - state.lastRenderMs < minInterval - 1.5) {
-      requestAnimationFrame(tick);
-      return;
-    }
-  }
-  state.lastRenderMs = nowMs;
-
-  const dt = Math.min(0.1, Math.max(0, (nowMs - state.lastTickMs) / 1000));
+  // Lock frame cadence to display refresh rate (VSync via requestAnimationFrame),
+  // and keep song playback clock uncapped across slow frames so lyrics never drift behind.
+  const rawDt = Math.min(2.0, Math.max(0, (nowMs - state.lastTickMs) / 1000));
   state.lastTickMs = nowMs;
 
   if (!state.demoMode && state.media.hasSession && state.media.status === 'Playing') {
-    state.clockPosSec += dt;
+    state.clockPosSec += rawDt;
   }
 
   let frame;
@@ -1078,10 +1071,11 @@ function tick() {
     };
   }
 
+  const animDt = Math.min(0.05, rawDt);
   if (frame.isPlaying) {
     state.pausedBottomSec = 0;
   } else {
-    state.pausedBottomSec += dt;
+    state.pausedBottomSec += animDt;
   }
   const bottomExpired = !frame.isPlaying && state.pausedBottomSec >= (state.settings.lyricDecaySec ?? 2.5);
   renderBottomLyric(frame, bottomExpired);
@@ -1126,7 +1120,7 @@ function tick() {
     updateHudText();
   }
   if (soloActive && !visualizer.transition && !state.settings.freeExplore) {
-    state.instrumentalTourTimer += dt;
+    state.instrumentalTourTimer += animDt;
     if (state.instrumentalTourTimer >= 16) {
       state.instrumentalTourTimer = 0;
       switchToNextTourConstellation();
@@ -1203,6 +1197,7 @@ function wireControls() {
       state.pointer.x = e.clientX;
       state.pointer.y = e.clientY;
       state.pointer.inside = true;
+      visualizer.pointerActiveUntil = performance.now() + 400;
     } else {
       state.pointer.inside = false;
     }
@@ -1664,6 +1659,7 @@ function wireControls() {
 
 function applyWallpaperMode(enabled) {
   document.body.classList.toggle('wallpaper-mode', Boolean(enabled));
+  visualizer.resize();
 }
 
 async function lookupBrowserLyrics(force = false) {

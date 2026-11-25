@@ -2573,7 +2573,7 @@ class StarVisualizer {
     this.lastEphemerisAt = typeof performance !== 'undefined' ? performance.now() / 1000 : 0;
 
     // Persistent 3D background stars + subtle Milky Way galactic band
-    this.bgStars = this._createSphereStars(420, 180);
+    this.bgStars = this._createSphereStars(320, 120);
 
     this.shootingStars = [];
     this.nextShootingStarAt = 3.5;
@@ -2597,9 +2597,10 @@ class StarVisualizer {
     this.instrumentalStep = 0;
     this.isInstrumentalActive = false;
 
-    // Hover Star Inspector hit targets (populated each frame)
+    // Hover Star Inspector hit targets (populated only when pointer active)
     this.hitTargets = [];
     this.hoveredTarget = null;
+    this.pointerActiveUntil = 0;
 
     this.wordBubbles = new Map();
     this.lastActiveWordKey = '';
@@ -2629,6 +2630,8 @@ class StarVisualizer {
         return normalize3(px, py, pz);
       });
 
+      const projPool = c.stars.map((s) => ({ ...s, sx: 0, sy: 0, z: 0 }));
+
       return {
         constellation: c,
         centerDir: C,
@@ -2636,6 +2639,7 @@ class StarVisualizer {
         vDir: V,
         qTarget,
         starDirs,
+        projPool,
       };
     });
   }
@@ -2723,7 +2727,7 @@ class StarVisualizer {
 
   resize() {
     const isWallpaper = typeof document !== 'undefined' && document.body?.classList.contains('wallpaper-mode');
-    this.dpr = Math.min(window.devicePixelRatio || 1, isWallpaper ? 1.5 : 2);
+    this.dpr = isWallpaper ? 1 : Math.min(window.devicePixelRatio || 1, 2);
     this.width = Math.max(1, window.innerWidth || 1);
     this.height = Math.max(1, window.innerHeight || 1);
     this.canvas.width = Math.floor(this.width * this.dpr);
@@ -2952,24 +2956,45 @@ class StarVisualizer {
   }
 
   _projectSkyConstellation(sky, qCam, cx, cy, domeRadius) {
-    const pts = [];
-    for (let i = 0; i < sky.starDirs.length; i++) {
-      const s = sky.constellation.stars[i];
-      const [vx, vy, vz] = rotateVecByQuat(sky.starDirs[i], qCam);
-      const proj = this._projectDomePoint(vx, vy, vz, cx, cy, domeRadius);
-      pts.push({
-        ...s,
-        sx: proj.sx,
-        sy: proj.sy,
-        z: proj.z,
-      });
+    const pts = sky.projPool;
+    const dirs = sky.starDirs;
+    for (let i = 0; i < dirs.length; i++) {
+      const [vx, vy, vz] = rotateVecByQuat(dirs[i], qCam);
+      const denom = 1 + Math.max(-0.22, 1 - vz) * 0.28;
+      const p = pts[i];
+      p.sx = cx + (vx / denom) * domeRadius;
+      p.sy = cy + (vy / denom) * domeRadius;
+      p.z = vz;
     }
     return pts;
   }
 
+  _getGlowSprite(hex) {
+    const key = hex || '#cfe4ff';
+    const existing = this.starSprites.get(key);
+    if (existing) return existing;
+    if (typeof document === 'undefined') return null;
+
+    const size = 96;
+    const half = size / 2;
+    const off = document.createElement('canvas');
+    off.width = size;
+    off.height = size;
+    const octx = off.getContext('2d');
+    const grad = octx.createRadialGradient(half, half, 0, half, half, half);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    grad.addColorStop(0.16, this._hexToRgba(key, 0.86));
+    grad.addColorStop(0.45, this._hexToRgba(key, 0.30));
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    octx.fillStyle = grad;
+    octx.fillRect(0, 0, size, size);
+    this.starSprites.set(key, off);
+    return off;
+  }
+
   _drawStarSprite(ctx, x, y, radius, color, alpha) {
     if (alpha <= 0.005 || radius <= 0.2) return;
-    const sprite = this.starSprites.get(color) || this.starSprites.get('#ffffff');
+    const sprite = this._getGlowSprite(color);
     if (!sprite) return;
     const d = radius * 2;
     ctx.globalAlpha = clamp(alpha, 0, 1);
@@ -3026,8 +3051,9 @@ class StarVisualizer {
       this.pausedIdleSec += dt;
     }
 
-    // Reset hit targets each frame for Hover Star Inspector
+    // Reset hit targets only when hover inspector is actively in use
     this.hitTargets.length = 0;
+    this.collectHitTargets = Boolean(this.settings.hoverInspector) && (nowMs <= this.pointerActiveUntil || Boolean(this.hoveredTarget));
 
     // Refresh real-time planetary & spacecraft ephemeris every 30s
     if (nowSec - this.lastEphemerisAt >= 30) {
@@ -3224,14 +3250,19 @@ class StarVisualizer {
       const alpha = clamp(s.alpha * twinkle * limbFade * (0.55 + bright * 0.42) * trebleBoost, 0, 1);
       const r = s.size * (0.85 + bright * 0.15) * bassBoost;
 
-      if (r > 1.15) {
-        this._drawStarSprite(ctx, proj.sx, proj.sy, r * 3.2, s.color, alpha * 0.55);
+      if (r > 1.35) {
+        this._drawStarSprite(ctx, proj.sx, proj.sy, r * 3.0, s.color, alpha * 0.55);
       }
       ctx.globalAlpha = alpha;
       ctx.fillStyle = s.color;
-      ctx.beginPath();
-      ctx.arc(proj.sx, proj.sy, r, 0, Math.PI * 2);
-      ctx.fill();
+      if (r <= 1.65) {
+        const d = r * 2;
+        ctx.fillRect(proj.sx - r, proj.sy - r, d, d);
+      } else {
+        ctx.beginPath();
+        ctx.arc(proj.sx, proj.sy, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -3306,14 +3337,21 @@ class StarVisualizer {
       const r = this._computeStarRadius(s.mag, false, bright);
       const alpha = clamp(0.36 * twinkle * starLimb * (0.6 + bright * 0.36), 0, 0.92);
 
-      this._drawStarSprite(ctx, s.sx, s.sy, r * 3.4, s.color, alpha * 0.45);
+      if (starLimb > 0.35 && r > 1.15) {
+        this._drawStarSprite(ctx, s.sx, s.sy, r * 3.2, s.color, alpha * 0.45);
+      }
       ctx.globalAlpha = alpha;
       ctx.fillStyle = s.color;
-      ctx.beginPath();
-      ctx.arc(s.sx, s.sy, r, 0, Math.PI * 2);
-      ctx.fill();
+      if (r <= 1.65) {
+        const d = r * 2;
+        ctx.fillRect(s.sx - r, s.sy - r, d, d);
+      } else {
+        ctx.beginPath();
+        ctx.arc(s.sx, s.sy, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-      if (s.z > 0.08 && (s.name || s.mag < 2.2) && s.sx > -20 && s.sx < this.width + 20 && s.sy > -20 && s.sy < this.height + 20) {
+      if (this.collectHitTargets && s.z > 0.08 && (s.name || s.mag < 2.2) && s.sx > -20 && s.sx < this.width + 20 && s.sy > -20 && s.sy < this.height + 20) {
         this.hitTargets.push({
           x: s.sx,
           y: s.sy,
@@ -3377,26 +3415,11 @@ class StarVisualizer {
         ctx.save();
         ctx.rotate(obj.angle || 0.4);
         ctx.scale(1.45, 0.62);
-        const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
-        grad.addColorStop(0, this._hexToRgba('#ffffff', 0.34 * limbFade * pulse));
-        grad.addColorStop(0.28, this._hexToRgba(obj.color, 0.20 * limbFade * pulse));
-        grad.addColorStop(0.65, this._hexToRgba(obj.color, 0.06 * limbFade));
-        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(0, 0, radius, 0, Math.PI * 2);
-        ctx.fill();
+        this._drawStarSprite(ctx, 0, 0, radius, obj.color, 0.36 * limbFade * pulse);
         ctx.restore();
       } else if (obj.kind === 'Nebula' || obj.kind === 'Supernova Remnant' || obj.kind === 'Planetary Nebula') {
-        const grad = ctx.createRadialGradient(0, 0, radius * 0.12, 0, 0, radius * 1.15);
         const isRing = obj.kind === 'Planetary Nebula';
-        grad.addColorStop(0, this._hexToRgba(obj.color, (isRing ? 0.08 : 0.25) * limbFade * pulse));
-        grad.addColorStop(0.45, this._hexToRgba(obj.color, 0.18 * limbFade * pulse));
-        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(0, 0, radius * 1.15, 0, Math.PI * 2);
-        ctx.fill();
+        this._drawStarSprite(ctx, 0, 0, radius * 1.15, obj.color, (isRing ? 0.24 : 0.34) * limbFade * pulse);
 
         if (isRing) {
           ctx.strokeStyle = this._hexToRgba(obj.color, 0.32 * limbFade);
@@ -3417,13 +3440,11 @@ class StarVisualizer {
         ctx.setLineDash([]);
 
         ctx.fillStyle = obj.color;
+        ctx.globalAlpha = 0.48 * limbFade * pulse;
         for (let k = 0; k < 6; k++) {
           const ang = k * 1.05 + i;
           const dist = cr * (0.22 + (k % 3) * 0.22);
-          ctx.globalAlpha = 0.48 * limbFade * pulse;
-          ctx.beginPath();
-          ctx.arc(Math.cos(ang) * dist, Math.sin(ang) * dist, 0.9, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.fillRect(Math.cos(ang) * dist - 0.9, Math.sin(ang) * dist - 0.9, 1.8, 1.8);
         }
         ctx.globalAlpha = 1;
       }
@@ -3920,12 +3941,16 @@ class StarVisualizer {
 
       ctx.save();
       ctx.setLineDash([4, 6]);
+      if (segGlow > 0.08) {
+        ctx.strokeStyle = `rgba(170, 214, 255, ${(0.22 * segGlow).toFixed(3)})`;
+        ctx.lineWidth = 3.2 + segGlow * 2.8;
+        ctx.beginPath();
+        ctx.moveTo(a.pt.sx, a.pt.sy);
+        ctx.lineTo(b.pt.sx, b.pt.sy);
+        ctx.stroke();
+      }
       ctx.strokeStyle = `rgba(180, 214, 255, ${(0.24 * segAlpha + segGlow * 0.48).toFixed(3)})`;
       ctx.lineWidth = 1.0 + segGlow * 1.4;
-      if (segGlow > 0.08) {
-        ctx.shadowColor = 'rgba(185, 224, 255, 0.85)';
-        ctx.shadowBlur = 9 * segGlow;
-      }
       ctx.beginPath();
       ctx.moveTo(a.pt.sx, a.pt.sy);
       ctx.lineTo(b.pt.sx, b.pt.sy);
@@ -4170,22 +4195,27 @@ class StarVisualizer {
       ctx.stroke();
 
       if (edgeGlow > 0.03) {
+        const coreWidth = 1.45 + edgeGlow * (1.7 + fx * 0.6);
+        if (edgeGlow > 0.14 && fx > 0.1) {
+          ctx.strokeStyle = `rgba(170, 216, 255, ${(Math.min(0.32, edgeGlow * 0.24) * fadeIn * lineMult).toFixed(3)})`;
+          ctx.lineWidth = coreWidth * 2.5;
+          ctx.beginPath();
+          ctx.moveTo(sa.sx, sa.sy);
+          ctx.lineTo(sb.sx, sb.sy);
+          ctx.stroke();
+        }
         const grad = ctx.createLinearGradient(sa.sx, sa.sy, sb.sx, sb.sy);
         const aAlpha = clamp((0.18 + this.starGlow[a] * 0.75 + mid * 0.16) * fadeIn * lineMult, 0, 0.98);
         const bAlpha = clamp((0.18 + this.starGlow[b] * 0.75 + mid * 0.16) * fadeIn * lineMult, 0, 0.98);
         grad.addColorStop(0, `rgba(225, 242, 255, ${aAlpha.toFixed(3)})`);
         grad.addColorStop(1, `rgba(225, 242, 255, ${bAlpha.toFixed(3)})`);
 
-        ctx.save();
         ctx.strokeStyle = grad;
-        ctx.lineWidth = 1.45 + edgeGlow * (1.7 + fx * 0.6);
-        ctx.shadowColor = 'rgba(185, 224, 255, 0.9)';
-        ctx.shadowBlur = 11 * edgeGlow * Math.max(0.3, fx);
+        ctx.lineWidth = coreWidth;
         ctx.beginPath();
         ctx.moveTo(sa.sx, sa.sy);
         ctx.lineTo(sb.sx, sb.sy);
         ctx.stroke();
-        ctx.restore();
       }
     }
 
@@ -4292,16 +4322,15 @@ class StarVisualizer {
       ctx.save();
       ctx.strokeStyle = grad;
       ctx.lineWidth = 2.2;
-      ctx.shadowColor = 'rgba(205, 232, 255, 0.9)';
-      ctx.shadowBlur = 10;
       ctx.beginPath();
       ctx.moveTo(tx, ty);
       ctx.lineTo(hx, hy);
       ctx.stroke();
 
+      this._drawStarSprite(ctx, hx, hy, 8.5, c.color, alpha * 0.85);
       ctx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
       ctx.beginPath();
-      ctx.arc(hx, hy, 2.3, 0, Math.PI * 2);
+      ctx.arc(hx, hy, 2.2, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
@@ -4406,22 +4435,21 @@ class StarVisualizer {
       ctx.textBaseline = 'middle';
       ctx.font = `${stylePrefix}${b.isCurrent ? 600 : 400} ${fontSize}px ${this.settings.fontFamily}`;
 
-      // Contrast halo so lyrics stay sharp right next to bright stars and nebula/line glow
+      // Contrast halo so lyrics stay sharp right next to bright stars (zero CPU shadowBlur)
       ctx.lineJoin = 'round';
       ctx.miterLimit = 2;
-      ctx.lineWidth = b.isCurrent ? 5.2 : 3.8;
+      if (b.isCurrent) {
+        ctx.lineWidth = 7.4 * Math.min(1.35, glowBoost);
+        ctx.strokeStyle = `rgba(175, 218, 255, ${(0.24 * finalAlpha).toFixed(3)})`;
+        ctx.strokeText(b.text, 0, 0);
+      }
+      ctx.lineWidth = b.isCurrent ? 4.8 : 3.6;
       ctx.strokeStyle = `rgba(0, 0, 0, ${(finalAlpha * (b.isCurrent ? 0.92 : 0.78)).toFixed(3)})`;
-      ctx.shadowColor = `rgba(0, 0, 0, ${(finalAlpha * 0.95).toFixed(3)})`;
-      ctx.shadowBlur = b.isCurrent ? 10 : 6;
       ctx.strokeText(b.text, 0, 0);
 
       if (b.isCurrent) {
-        ctx.shadowColor = `rgba(175, 218, 255, ${(0.95 * finalAlpha).toFixed(3)})`;
-        ctx.shadowBlur = 14 * glowBoost;
         ctx.fillStyle = `rgba(255, 255, 255, ${finalAlpha.toFixed(3)})`;
       } else {
-        ctx.shadowColor = `rgba(140, 188, 255, ${(0.55 * finalAlpha).toFixed(3)})`;
-        ctx.shadowBlur = 7 * glowBoost;
         ctx.fillStyle = `rgba(214, 232, 255, ${(finalAlpha * 0.74).toFixed(3)})`;
       }
 
@@ -6020,20 +6048,13 @@ function tick() {
   }
 
   const nowMs = performance.now();
-  if (state.weTargetFps > 0 && state.weTargetFps < 120 && state.lastRenderMs > 0) {
-    const minInterval = 1000 / state.weTargetFps;
-    if (nowMs - state.lastRenderMs < minInterval - 1.5) {
-      requestAnimationFrame(tick);
-      return;
-    }
-  }
-  state.lastRenderMs = nowMs;
-
-  const dt = Math.min(0.1, Math.max(0, (nowMs - state.lastTickMs) / 1000));
+  // Lock frame cadence to display refresh rate (VSync via requestAnimationFrame),
+  // and keep song playback clock uncapped across slow frames so lyrics never drift behind.
+  const rawDt = Math.min(2.0, Math.max(0, (nowMs - state.lastTickMs) / 1000));
   state.lastTickMs = nowMs;
 
   if (!state.demoMode && state.media.hasSession && state.media.status === 'Playing') {
-    state.clockPosSec += dt;
+    state.clockPosSec += rawDt;
   }
 
   let frame;
@@ -6069,10 +6090,11 @@ function tick() {
     };
   }
 
+  const animDt = Math.min(0.05, rawDt);
   if (frame.isPlaying) {
     state.pausedBottomSec = 0;
   } else {
-    state.pausedBottomSec += dt;
+    state.pausedBottomSec += animDt;
   }
   const bottomExpired = !frame.isPlaying && state.pausedBottomSec >= (state.settings.lyricDecaySec ?? 2.5);
   renderBottomLyric(frame, bottomExpired);
@@ -6117,7 +6139,7 @@ function tick() {
     updateHudText();
   }
   if (soloActive && !visualizer.transition && !state.settings.freeExplore) {
-    state.instrumentalTourTimer += dt;
+    state.instrumentalTourTimer += animDt;
     if (state.instrumentalTourTimer >= 16) {
       state.instrumentalTourTimer = 0;
       switchToNextTourConstellation();
@@ -6194,6 +6216,7 @@ function wireControls() {
       state.pointer.x = e.clientX;
       state.pointer.y = e.clientY;
       state.pointer.inside = true;
+      visualizer.pointerActiveUntil = performance.now() + 400;
     } else {
       state.pointer.inside = false;
     }
@@ -6655,6 +6678,7 @@ function wireControls() {
 
 function applyWallpaperMode(enabled) {
   document.body.classList.toggle('wallpaper-mode', Boolean(enabled));
+  visualizer.resize();
 }
 
 async function lookupBrowserLyrics(force = false) {
