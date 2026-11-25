@@ -5,6 +5,8 @@
 const DEG2RAD = Math.PI / 180;
 const RAD2DEG = 180 / Math.PI;
 const OBLIQUITY_RAD = 23.43928 * DEG2RAD;
+const COS_OBLIQUITY = Math.cos(OBLIQUITY_RAD);
+const SIN_OBLIQUITY = Math.sin(OBLIQUITY_RAD);
 
 export function raDecToVec3(raHours, decDeg) {
   const ra = (raHours / 24) * Math.PI * 2;
@@ -25,17 +27,16 @@ function wrapSignedDeg(deg) {
 }
 
 function eclipticToRaDec(x, y, z) {
-  const cosE = Math.cos(OBLIQUITY_RAD);
-  const sinE = Math.sin(OBLIQUITY_RAD);
   const xq = x;
-  const yq = y * cosE - z * sinE;
-  const zq = y * sinE + z * cosE;
+  const yq = y * COS_OBLIQUITY - z * SIN_OBLIQUITY;
+  const zq = y * SIN_OBLIQUITY + z * COS_OBLIQUITY;
+  const xy = Math.sqrt(xq * xq + yq * yq);
   const raDeg = normDeg(Math.atan2(yq, xq) * RAD2DEG);
-  const decDeg = Math.atan2(zq, Math.hypot(xq, yq)) * RAD2DEG;
+  const decDeg = Math.atan2(zq, xy) * RAD2DEG;
   return {
     ra: raDeg / 15,
     dec: decDeg,
-    dist: Math.hypot(x, y, z),
+    dist: Math.sqrt(x * x + y * y + z * z),
   };
 }
 
@@ -707,17 +708,19 @@ export function computeLiveSolarSystem(date = new Date()) {
   };
 }
 
+const PROBE_DIRS = DEEP_SPACE_PROBES.map((p) => raDecToVec3(p.ra, p.dec));
+
 export function computeSpacecraft(date = new Date(), solarSystem = null) {
   const sys = solarSystem || computeLiveSolarSystem(date);
   const yearsSince2025 =
     (date.getTime() - Date.UTC(2025, 0, 1, 0, 0, 0)) / (365.25 * 86400000);
 
-  const probes = DEEP_SPACE_PROBES.map((p) => {
+  const probes = DEEP_SPACE_PROBES.map((p, idx) => {
     const distanceAu = Math.max(1, p.baseAu2025 + p.auPerYear * yearsSince2025);
     const lightHours = (distanceAu * 499.005) / 3600;
     return {
       ...p,
-      dir: raDecToVec3(p.ra, p.dec),
+      dir: PROBE_DIRS[idx],
       distanceAu,
       lightHours,
     };
@@ -774,36 +777,56 @@ const LEO_ORBITS = [
   },
 ];
 
-function leoOrbitPoint(orbit, thetaRad) {
+// Precomputed orthonormal orbital basis + reusable zero-allocation state per LEO satellite
+const LEO_FAST = LEO_ORBITS.map((orbit) => {
   const inc = orbit.inclinationDeg * DEG2RAD;
   const node = orbit.ascNodeDeg * DEG2RAD;
-  const cosT = Math.cos(thetaRad);
-  const sinT = Math.sin(thetaRad);
   const cosO = Math.cos(node);
   const sinO = Math.sin(node);
   const cosI = Math.cos(inc);
   const sinI = Math.sin(inc);
+  const trailDirs = [];
+  for (let k = 0; k < 6; k++) trailDirs.push([0, 0, 0]);
+  return {
+    omega: (Math.PI * 2) / orbit.periodSec,
+    phaseOffset: orbit.phaseOffset,
+    ux: cosO,
+    uy: sinO,
+    uz: 0,
+    vx: -sinO * cosI,
+    vy: cosO * cosI,
+    vz: sinI,
+    state: {
+      ...orbit,
+      dir: [0, 0, 0],
+      trailDirs,
+    },
+  };
+});
 
-  const x = cosO * cosT - sinO * sinT * cosI;
-  const y = sinO * cosT + cosO * sinT * cosI;
-  const z = sinT * sinI;
-  const len = Math.hypot(x, y, z) || 1;
-  return [x / len, y / len, z / len];
-}
+const LEO_RESULTS = LEO_FAST.map((f) => f.state);
 
 export function computeOrbitingSatellites(nowSec) {
-  return LEO_ORBITS.map((orbit) => {
-    const omega = (Math.PI * 2) / orbit.periodSec;
-    const theta = nowSec * omega + orbit.phaseOffset;
-    const dir = leoOrbitPoint(orbit, theta);
-    const trailDirs = [];
-    for (let k = 1; k <= 6; k++) {
-      trailDirs.push(leoOrbitPoint(orbit, theta - k * 0.032));
+  for (let i = 0; i < LEO_FAST.length; i++) {
+    const f = LEO_FAST[i];
+    const theta = nowSec * f.omega + f.phaseOffset;
+    const ct = Math.cos(theta);
+    const st = Math.sin(theta);
+    const d = f.state.dir;
+    d[0] = f.ux * ct + f.vx * st;
+    d[1] = f.uy * ct + f.vy * st;
+    d[2] = f.vz * st;
+
+    const trails = f.state.trailDirs;
+    for (let k = 0; k < 6; k++) {
+      const ang = theta - (k + 1) * 0.032;
+      const ck = Math.cos(ang);
+      const sk = Math.sin(ang);
+      const td = trails[k];
+      td[0] = f.ux * ck + f.vx * sk;
+      td[1] = f.uy * ck + f.vy * sk;
+      td[2] = f.vz * sk;
     }
-    return {
-      ...orbit,
-      dir,
-      trailDirs,
-    };
-  });
+  }
+  return LEO_RESULTS;
 }

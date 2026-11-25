@@ -62,6 +62,19 @@
       <section class="setting-group">
         <div class="group-title">Visuals &amp; Stars</div>
 
+        <div class="select-row">
+          <label for="opt-color-theme" class="select-label">App Colour Theme</label>
+          <select id="opt-color-theme" class="select-input">
+            <option value="starlight" selected>Starlight (Pure Black &amp; Ice Blue)</option>
+            <option value="nebula">Cosmic Nebula (Deep Violet &amp; Orchid)</option>
+            <option value="aurora">Aurora Borealis (Emerald &amp; Cyan)</option>
+            <option value="amber">Solar Amber (Warm Gold &amp; Champagne)</option>
+            <option value="crimson">Crimson Nova (Rose Giant &amp; Ruby)</option>
+            <option value="ocean">Abyssal Sapphire (Deep Navy &amp; Cyan)</option>
+            <option value="monochrome">Silver Monochrome (Pure Black &amp; White)</option>
+          </select>
+        </div>
+
         <label class="range-row" for="opt-brightness">
           <div class="range-head"><span>Star Brightness</span><span id="val-brightness" class="range-val">1.15×</span></div>
           <input id="opt-brightness" type="range" min="0.4" max="2.0" step="0.05" value="1.15" />
@@ -196,7 +209,10 @@
         </label>
 
         <div class="offset-row">
-          <div class="range-head"><span>Lyric Sync Offset</span><span id="val-offset" class="range-val">0.0s</span></div>
+          <label class="range-row" for="opt-sync-offset">
+            <div class="range-head"><span>Lyric Sync Offset</span><span id="val-offset" class="range-val">+0.0s</span></div>
+            <input id="opt-sync-offset" type="range" min="-5" max="5" step="0.1" value="0" />
+          </label>
           <div class="btn-row">
             <button id="btn-offset-minus" class="pill-btn" type="button">-0.2s</button>
             <button id="btn-offset-reset" class="pill-btn" type="button">Reset (0)</button>

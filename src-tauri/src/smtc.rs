@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
@@ -70,6 +71,7 @@ pub fn now_unix_ms() -> i64 {
 }
 
 /// Converts Windows FILETIME (100ns ticks since 1601-01-01) to Unix epoch milliseconds.
+#[inline]
 fn filetime_to_unix_ms(universal_time: i64) -> i64 {
     const WINDOWS_TO_UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
     if universal_time > WINDOWS_TO_UNIX_EPOCH_TICKS {
@@ -79,6 +81,7 @@ fn filetime_to_unix_ms(universal_time: i64) -> i64 {
     }
 }
 
+#[inline]
 fn status_to_string(status: GlobalSystemMediaTransportControlsSessionPlaybackStatus) -> &'static str {
     match status {
         GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing => "Playing",
@@ -115,98 +118,165 @@ pub fn create_session_manager() -> windows::core::Result<GlobalSystemMediaTransp
     GlobalSystemMediaTransportControlsSessionManager::RequestAsync()?.get()
 }
 
-pub fn poll_session(mgr: &GlobalSystemMediaTransportControlsSessionManager) -> MediaState {
-    let sampled_at_ms = now_unix_ms();
-    let Some(session) = pick_best_session(mgr) else {
-        return MediaState::empty(sampled_at_ms);
-    };
+/// Stateful SMTC poller that reads fast local timeline/status properties every 250ms
+/// and caches cross-process `TryGetMediaPropertiesAsync` metadata (~83% fewer WinRT RPCs).
+#[derive(Default)]
+pub struct SmtcPoller {
+    cached_app_id: String,
+    cached_title: String,
+    cached_artist: String,
+    cached_album: String,
+    cached_status: &'static str,
+    cached_end_sec: f64,
+    cached_pos_sec: f64,
+    polls_since_props: u32,
+}
 
-    let Ok(props) = session
-        .TryGetMediaPropertiesAsync()
-        .and_then(|op| op.get())
-    else {
-        return MediaState::empty(sampled_at_ms);
-    };
-
-    let title = props.Title().map(|s| s.to_string()).unwrap_or_default();
-    let artist = props.Artist().map(|s| s.to_string()).unwrap_or_default();
-    let album = props.AlbumTitle().map(|s| s.to_string()).unwrap_or_default();
-
-    let status = session
-        .GetPlaybackInfo()
-        .and_then(|pb| pb.PlaybackStatus())
-        .map(status_to_string)
-        .unwrap_or("Paused")
-        .to_string();
-
-    let (position_sec, end_sec, last_updated_ms) = match session.GetTimelineProperties() {
-        Ok(tl) => {
-            let pos = tl
-                .Position()
-                .map(|t| (t.Duration as f64) / 10_000_000.0)
-                .unwrap_or(0.0)
-                .max(0.0);
-            let end = tl
-                .EndTime()
-                .map(|t| (t.Duration as f64) / 10_000_000.0)
-                .unwrap_or(0.0)
-                .max(0.0);
-            let updated = tl
-                .LastUpdatedTime()
-                .map(|dt| filetime_to_unix_ms(dt.UniversalTime))
-                .unwrap_or(0);
-            (pos, end, updated)
+impl SmtcPoller {
+    pub fn new() -> Self {
+        Self {
+            cached_status: "Closed",
+            ..Self::default()
         }
-        Err(_) => (0.0, 0.0, 0),
-    };
+    }
 
-    let app_id = session
-        .SourceAppUserModelId()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    pub fn poll(&mut self, mgr: &GlobalSystemMediaTransportControlsSessionManager) -> MediaState {
+        let sampled_at_ms = now_unix_ms();
+        let Some(session) = pick_best_session(mgr) else {
+            self.cached_app_id.clear();
+            self.cached_title.clear();
+            self.cached_artist.clear();
+            self.cached_album.clear();
+            self.cached_status = "Closed";
+            self.cached_end_sec = 0.0;
+            self.cached_pos_sec = 0.0;
+            self.polls_since_props = 0;
+            return MediaState::empty(sampled_at_ms);
+        };
 
-    MediaState {
-        has_session: !title.trim().is_empty(),
-        title,
-        artist,
-        album,
-        status,
-        position_sec,
-        end_sec,
-        last_updated_ms,
-        sampled_at_ms,
-        app_id,
+        let app_id = session
+            .SourceAppUserModelId()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        let status_str = session
+            .GetPlaybackInfo()
+            .and_then(|pb| pb.PlaybackStatus())
+            .map(status_to_string)
+            .unwrap_or("Paused");
+
+        let (position_sec, end_sec, last_updated_ms) = match session.GetTimelineProperties() {
+            Ok(tl) => {
+                let pos = tl
+                    .Position()
+                    .map(|t| (t.Duration as f64) / 10_000_000.0)
+                    .unwrap_or(0.0)
+                    .max(0.0);
+                let end = tl
+                    .EndTime()
+                    .map(|t| (t.Duration as f64) / 10_000_000.0)
+                    .unwrap_or(0.0)
+                    .max(0.0);
+                let updated = tl
+                    .LastUpdatedTime()
+                    .map(|dt| filetime_to_unix_ms(dt.UniversalTime))
+                    .unwrap_or(0);
+                (pos, end, updated)
+            }
+            Err(_) => (0.0, 0.0, 0),
+        };
+
+        let jumped_to_start = position_sec + 1.5 < self.cached_pos_sec && position_sec < 3.5;
+        let need_props_refresh = self.cached_title.is_empty()
+            || app_id != self.cached_app_id
+            || status_str != self.cached_status
+            || (end_sec - self.cached_end_sec).abs() > 0.4
+            || jumped_to_start
+            || self.polls_since_props >= 6;
+
+        if need_props_refresh {
+            if let Ok(props) = session.TryGetMediaPropertiesAsync().and_then(|op| op.get()) {
+                self.cached_title = props.Title().map(|s| s.to_string()).unwrap_or_default();
+                self.cached_artist = props.Artist().map(|s| s.to_string()).unwrap_or_default();
+                self.cached_album = props.AlbumTitle().map(|s| s.to_string()).unwrap_or_default();
+                self.polls_since_props = 0;
+            } else if self.cached_title.is_empty() {
+                return MediaState::empty(sampled_at_ms);
+            }
+        } else {
+            self.polls_since_props += 1;
+        }
+
+        self.cached_app_id = app_id.clone();
+        self.cached_status = status_str;
+        self.cached_end_sec = end_sec;
+        self.cached_pos_sec = position_sec;
+
+        MediaState {
+            has_session: !self.cached_title.trim().is_empty(),
+            title: self.cached_title.clone(),
+            artist: self.cached_artist.clone(),
+            album: self.cached_album.clone(),
+            status: status_str.to_string(),
+            position_sec,
+            end_sec,
+            last_updated_ms,
+            sampled_at_ms,
+            app_id,
+        }
+    }
+}
+
+fn with_shared_manager<F, R>(mut f: F) -> Result<R, String>
+where
+    F: FnMut(&GlobalSystemMediaTransportControlsSessionManager) -> Result<R, String>,
+{
+    static SHARED_MGR: OnceLock<Mutex<Option<GlobalSystemMediaTransportControlsSessionManager>>> =
+        OnceLock::new();
+    let lock = SHARED_MGR.get_or_init(|| Mutex::new(None));
+    let mut guard = lock.lock().map_err(|_| "SMTC mutex poisoned".to_string())?;
+    if guard.is_none() {
+        *guard = Some(create_session_manager().map_err(|e| e.to_string())?);
+    }
+    match f(guard.as_ref().unwrap()) {
+        Ok(val) => Ok(val),
+        Err(_) => {
+            *guard = Some(create_session_manager().map_err(|e| e.to_string())?);
+            f(guard.as_ref().unwrap())
+        }
     }
 }
 
 pub fn control_playback(action: &str) -> Result<bool, String> {
-    let mgr = create_session_manager().map_err(|e| e.to_string())?;
-    let Some(session) = pick_best_session(&mgr) else {
-        return Ok(false);
-    };
+    with_shared_manager(|mgr| {
+        let Some(session) = pick_best_session(mgr) else {
+            return Ok(false);
+        };
 
-    let op = match action {
-        "toggle" => session.TryTogglePlayPauseAsync(),
-        "prev" => session.TrySkipPreviousAsync(),
-        "next" => session.TrySkipNextAsync(),
-        _ => return Err(format!("Unknown media action: {action}")),
-    };
+        let op = match action {
+            "toggle" => session.TryTogglePlayPauseAsync(),
+            "prev" => session.TrySkipPreviousAsync(),
+            "next" => session.TrySkipNextAsync(),
+            _ => return Err(format!("Unknown media action: {action}")),
+        };
 
-    op.map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())
+        op.map_err(|e| e.to_string())?
+            .get()
+            .map_err(|e| e.to_string())
+    })
 }
 
 pub fn seek_playback(position_sec: f64) -> Result<bool, String> {
-    let mgr = create_session_manager().map_err(|e| e.to_string())?;
-    let Some(session) = pick_best_session(&mgr) else {
-        return Ok(false);
-    };
+    with_shared_manager(|mgr| {
+        let Some(session) = pick_best_session(mgr) else {
+            return Ok(false);
+        };
 
-    let ticks = (position_sec.max(0.0) * 10_000_000.0).round() as i64;
-    session
-        .TryChangePlaybackPositionAsync(ticks)
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())
+        let ticks = (position_sec.max(0.0) * 10_000_000.0).round() as i64;
+        session
+            .TryChangePlaybackPositionAsync(ticks)
+            .map_err(|e| e.to_string())?
+            .get()
+            .map_err(|e| e.to_string())
+    })
 }

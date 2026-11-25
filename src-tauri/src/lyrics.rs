@@ -146,13 +146,15 @@ impl LyricsService {
     pub fn new() -> Self {
         let client = Client::builder()
             .user_agent("StarlightVisualizer/1.0")
+            .tcp_nodelay(true)
+            .pool_max_idle_per_host(4)
             .timeout(Duration::from_secs(6))
             .build()
             .unwrap_or_else(|_| Client::new());
 
         Self {
             client,
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(Mutex::new(HashMap::with_capacity(64))),
             prefs: Arc::new(Mutex::new(LyricProviderPrefs::default())),
             prefs_gen: AtomicU64::new(0),
         }
@@ -195,6 +197,11 @@ impl LyricsService {
 
         let mut cache = self.cache.lock().await;
         if result.found && self.prefs_gen.load(Ordering::SeqCst) == start_gen {
+            if cache.len() >= 128 {
+                if let Some(evict_key) = cache.keys().next().cloned() {
+                    cache.remove(&evict_key);
+                }
+            }
             cache.insert(track_key.to_string(), result.clone());
         }
         result

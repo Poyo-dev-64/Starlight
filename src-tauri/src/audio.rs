@@ -49,6 +49,29 @@ pub fn start_wasapi_thread(app: AppHandle) {
     });
 }
 
+#[inline(always)]
+fn accumulate_mono_sample(
+    mono: f32,
+    lp_bass_alpha: f32,
+    lp_mid_alpha: f32,
+    lp_bass: &mut f32,
+    lp_mid: &mut f32,
+    acc_bass: &mut f32,
+    acc_mid: &mut f32,
+    acc_treble: &mut f32,
+    acc_sq: &mut f32,
+) {
+    *lp_bass += lp_bass_alpha * (mono - *lp_bass);
+    *lp_mid += lp_mid_alpha * (mono - *lp_mid);
+    let mid = *lp_mid - *lp_bass;
+    let treble = mono - *lp_mid;
+
+    *acc_bass += *lp_bass * *lp_bass;
+    *acc_mid += mid * mid;
+    *acc_treble += treble * treble;
+    *acc_sq += mono * mono;
+}
+
 fn run_capture_loop(app: &AppHandle) -> windows::core::Result<()> {
     unsafe {
         let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
@@ -60,6 +83,7 @@ fn run_capture_loop(app: &AppHandle) -> windows::core::Result<()> {
         let fmt = ptr::read_unaligned(mix_ptr);
 
         let channels = (fmt.nChannels as usize).max(1);
+        let inv_channels = 1.0f32 / (channels as f32);
         let sample_rate = (fmt.nSamplesPerSec as f32).max(8000.0);
         let bits = fmt.wBitsPerSample;
 
@@ -95,6 +119,7 @@ fn run_capture_loop(app: &AppHandle) -> windows::core::Result<()> {
         // 1-pole IIR lowpass filters for bass (< 180 Hz) and low+mid (< 2200 Hz)
         let lp_bass_alpha = 1.0 - (-TAU * 180.0 / sample_rate).exp();
         let lp_mid_alpha = 1.0 - (-TAU * 2200.0 / sample_rate).exp();
+        const INV_PCM16: f32 = 1.0 / 32768.0;
 
         let mut lp_bass = 0.0f32;
         let mut lp_mid = 0.0f32;
@@ -107,9 +132,11 @@ fn run_capture_loop(app: &AppHandle) -> windows::core::Result<()> {
         let mut beat_env = 0.0f32;
         let mut last_emit = Instant::now();
         let mut was_silent = false;
+        let mut silent_polls: u32 = 0;
 
         loop {
-            std::thread::sleep(Duration::from_millis(16));
+            let sleep_ms = if silent_polls >= 36 { 55 } else { 16 };
+            std::thread::sleep(Duration::from_millis(sleep_ms));
 
             let mut acc_bass = 0.0f32;
             let mut acc_mid = 0.0f32;
@@ -137,35 +164,86 @@ fn run_capture_loop(app: &AppHandle) -> windows::core::Result<()> {
                             data_ptr as *const f32,
                             frames * channels,
                         );
-                        for frame in samples.chunks_exact(channels) {
-                            let mono = frame.iter().copied().sum::<f32>() / channels as f32;
-                            lp_bass += lp_bass_alpha * (mono - lp_bass);
-                            lp_mid += lp_mid_alpha * (mono - lp_mid);
-                            let mid = lp_mid - lp_bass;
-                            let treble = mono - lp_mid;
-
-                            acc_bass += lp_bass * lp_bass;
-                            acc_mid += mid * mid;
-                            acc_treble += treble * treble;
-                            acc_sq += mono * mono;
+                        if channels == 2 {
+                            let mut idx = 0;
+                            let end = samples.len() & !1;
+                            while idx < end {
+                                let mono = (samples[idx] + samples[idx + 1]) * 0.5;
+                                accumulate_mono_sample(
+                                    mono,
+                                    lp_bass_alpha,
+                                    lp_mid_alpha,
+                                    &mut lp_bass,
+                                    &mut lp_mid,
+                                    &mut acc_bass,
+                                    &mut acc_mid,
+                                    &mut acc_treble,
+                                    &mut acc_sq,
+                                );
+                                idx += 2;
+                            }
+                        } else {
+                            for frame in samples.chunks_exact(channels) {
+                                let mut sum = 0.0f32;
+                                for &s in frame {
+                                    sum += s;
+                                }
+                                accumulate_mono_sample(
+                                    sum * inv_channels,
+                                    lp_bass_alpha,
+                                    lp_mid_alpha,
+                                    &mut lp_bass,
+                                    &mut lp_mid,
+                                    &mut acc_bass,
+                                    &mut acc_mid,
+                                    &mut acc_treble,
+                                    &mut acc_sq,
+                                );
+                            }
                         }
                     } else if !is_float && bits == 16 {
                         let samples = std::slice::from_raw_parts(
                             data_ptr as *const i16,
                             frames * channels,
                         );
-                        for frame in samples.chunks_exact(channels) {
-                            let mono = frame.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
-                                / channels as f32;
-                            lp_bass += lp_bass_alpha * (mono - lp_bass);
-                            lp_mid += lp_mid_alpha * (mono - lp_mid);
-                            let mid = lp_mid - lp_bass;
-                            let treble = mono - lp_mid;
-
-                            acc_bass += lp_bass * lp_bass;
-                            acc_mid += mid * mid;
-                            acc_treble += treble * treble;
-                            acc_sq += mono * mono;
+                        if channels == 2 {
+                            let mut idx = 0;
+                            let end = samples.len() & !1;
+                            while idx < end {
+                                let mono = ((samples[idx] as f32) + (samples[idx + 1] as f32))
+                                    * (0.5 * INV_PCM16);
+                                accumulate_mono_sample(
+                                    mono,
+                                    lp_bass_alpha,
+                                    lp_mid_alpha,
+                                    &mut lp_bass,
+                                    &mut lp_mid,
+                                    &mut acc_bass,
+                                    &mut acc_mid,
+                                    &mut acc_treble,
+                                    &mut acc_sq,
+                                );
+                                idx += 2;
+                            }
+                        } else {
+                            let scale = INV_PCM16 * inv_channels;
+                            for frame in samples.chunks_exact(channels) {
+                                let mut sum = 0.0f32;
+                                for &s in frame {
+                                    sum += s as f32;
+                                }
+                                accumulate_mono_sample(
+                                    sum * scale,
+                                    lp_bass_alpha,
+                                    lp_mid_alpha,
+                                    &mut lp_bass,
+                                    &mut lp_mid,
+                                    &mut acc_bass,
+                                    &mut acc_mid,
+                                    &mut acc_treble,
+                                    &mut acc_sq,
+                                );
+                            }
                         }
                     }
                     total_frames += frames;
@@ -175,11 +253,11 @@ fn run_capture_loop(app: &AppHandle) -> windows::core::Result<()> {
             }
 
             if total_frames > 0 {
-                let n = total_frames as f32;
-                let raw_bass = ((acc_bass / n).sqrt() * 3.4).min(1.2);
-                let raw_mid = ((acc_mid / n).sqrt() * 4.2).min(1.2);
-                let raw_treble = ((acc_treble / n).sqrt() * 5.4).min(1.2);
-                let raw_rms = ((acc_sq / n).sqrt() * 3.0).min(1.2);
+                let inv_n = 1.0f32 / (total_frames as f32);
+                let raw_bass = ((acc_bass * inv_n).sqrt() * 3.4).min(1.2);
+                let raw_mid = ((acc_mid * inv_n).sqrt() * 4.2).min(1.2);
+                let raw_treble = ((acc_treble * inv_n).sqrt() * 5.4).min(1.2);
+                let raw_rms = ((acc_sq * inv_n).sqrt() * 3.0).min(1.2);
 
                 sm_bass = sm_bass * 0.62 + raw_bass * 0.38;
                 sm_mid = sm_mid * 0.65 + raw_mid * 0.35;
@@ -192,22 +270,28 @@ fn run_capture_loop(app: &AppHandle) -> windows::core::Result<()> {
                 } else {
                     beat_env *= 0.80;
                 }
+                silent_polls = 0;
             } else {
                 sm_bass *= 0.84;
                 sm_mid *= 0.84;
                 sm_treble *= 0.84;
                 sm_rms *= 0.84;
                 beat_env *= 0.78;
+                silent_polls = silent_polls.saturating_add(1);
             }
 
             let is_silent = sm_rms < 0.004 && beat_env < 0.01;
             if last_emit.elapsed() >= Duration::from_millis(22) && (!is_silent || !was_silent) {
-                let levels = AudioLevels {
-                    bass: sm_bass.clamp(0.0, 1.0),
-                    mid: sm_mid.clamp(0.0, 1.0),
-                    treble: sm_treble.clamp(0.0, 1.0),
-                    rms: sm_rms.clamp(0.0, 1.0),
-                    beat: beat_env.clamp(0.0, 1.0),
+                let levels = if is_silent {
+                    AudioLevels::default()
+                } else {
+                    AudioLevels {
+                        bass: sm_bass.clamp(0.0, 1.0),
+                        mid: sm_mid.clamp(0.0, 1.0),
+                        treble: sm_treble.clamp(0.0, 1.0),
+                        rms: sm_rms.clamp(0.0, 1.0),
+                        beat: beat_env.clamp(0.0, 1.0),
+                    }
                 };
                 let _ = app.emit("audio-levels", levels);
                 last_emit = Instant::now();

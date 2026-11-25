@@ -1,5 +1,5 @@
 import { CONSTELLATIONS } from './constellations.js';
-import { StarVisualizer } from './visualizer.js';
+import { COLOR_THEMES, StarVisualizer } from './visualizer.js';
 import { fetchLyricsInBrowser } from './we-lyrics.js';
 
 const SETTINGS_KEY = 'starlight:settings:v1';
@@ -76,6 +76,7 @@ const FONT_PRESETS = {
 };
 
 const DEFAULT_SETTINGS = {
+  colorTheme: 'starlight',
   starBrightness: 1.15,
   effectsIntensity: 1.0,
   lineOpacity: 1.0,
@@ -85,6 +86,7 @@ const DEFAULT_SETTINGS = {
   rotationSpeed: 1.0,
   wordFontSize: 20,
   lyricDecaySec: 2.5,
+  syncOffsetSec: 0.0,
   wordEffect: 'rise',
   showLabels: true,
   showFactCard: true,
@@ -157,6 +159,7 @@ const factTitle = document.getElementById('fact-title');
 const factText = document.getElementById('fact-text');
 const btnCloseFact = document.getElementById('btn-close-fact');
 
+const optColorTheme = document.getElementById('opt-color-theme');
 const optBrightness = document.getElementById('opt-brightness');
 const valBrightness = document.getElementById('val-brightness');
 const optEffects = document.getElementById('opt-effects');
@@ -210,6 +213,7 @@ const elInspName = document.getElementById('insp-name');
 const elInspKind = document.getElementById('insp-kind');
 const elInspMeta = document.getElementById('insp-meta');
 const elInspNote = document.getElementById('insp-note');
+const optSyncOffset = document.getElementById('opt-sync-offset');
 const valOffset = document.getElementById('val-offset');
 const btnOffsetMinus = document.getElementById('btn-offset-minus');
 const btnOffsetReset = document.getElementById('btn-offset-reset');
@@ -262,8 +266,45 @@ function saveSettings(settings) {
   }
 }
 
+const initialSettings = loadSettings();
+
+// Reusable frame objects to eliminate per-frame object allocations in 60-240Hz rAF loop
+const EMPTY_WORDS = Object.freeze([]);
+const EMPTY_LYRIC_FRAME = Object.freeze({
+  lineIndex: -1,
+  lineKey: '',
+  activeWordIndex: -1,
+  words: EMPTY_WORDS,
+  lineProgress: 0,
+  text: '',
+  nextText: '',
+});
+const ACTIVE_LYRIC_FRAME = {
+  lineIndex: -1,
+  lineKey: '',
+  activeWordIndex: -1,
+  words: EMPTY_WORDS,
+  lineProgress: 0,
+  text: '',
+  nextText: '',
+};
+const RENDER_FRAME_STATE = {
+  isPlaying: false,
+  hasSyncedLyrics: false,
+  lineIndex: -1,
+  lineKey: '',
+  activeWordIndex: -1,
+  words: EMPTY_WORDS,
+  lineProgress: 0,
+  text: '',
+  nextText: '',
+  audio: null,
+  bottomClearY: 0,
+};
+
 const state = {
-  settings: loadSettings(),
+  settings: initialSettings,
+  appliedThemeId: '',
   settingsOpen: false,
   media: {
     hasSession: false,
@@ -289,10 +330,11 @@ const state = {
   currentTrackKey: '',
   clockPosSec: 0,
   lastTickMs: performance.now(),
-  syncOffsetSec: 0,
+  syncOffsetSec: Math.max(-5, Math.min(5, Math.round((Number(initialSettings.syncOffsetSec) || 0) * 10) / 10)),
   demoMode: false,
   demoStartMs: 0,
   browserLookupGen: 0,
+  lyricHintIdx: 0,
   lastLineIndex: -1,
   currentConstellationIndex: 0,
   wordsShownOnConstellation: 0,
@@ -301,7 +343,18 @@ const state = {
   customFontLoadedName: '',
   customFontFace: null,
   lastBottomKey: '',
+  bottomWrapHidden: true,
   bottomWordSpans: [],
+  bottomSpanStates: new Uint8Array(0),
+  bottomSpanFillSteps: new Int16Array(0),
+  playerBarHeight: 78,
+  bottomWrapHeight: 54,
+  cachedBottomClearY: (window.innerHeight || 900) - 48,
+  lastCurSecInt: -1,
+  lastDurSecInt: -1,
+  lastSeekMax: -1,
+  lastSeekDisabled: null,
+  lastSeekUpdateMs: 0,
   visitedConstellations: new Set(),
   instrumentalTourTimer: 0,
   wasInstrumentalSolo: false,
@@ -309,12 +362,18 @@ const state = {
   lastExploreNearestIdx: -1,
   pointer: { x: -1, y: -1, inside: false },
   lastInspectedKey: '',
+  inspectorHidden: true,
+  inspectorWidth: 240,
+  inspectorHeight: 88,
+  lastHudWakeMs: 0,
   playerSeeking: false,
   pausedBottomSec: 0,
+  wallpaperModeActive: false,
   weEnv: false,
   wePaused: false,
+  docHiddenPaused: false,
+  rafScheduled: false,
   weTargetFps: 0,
-  lastRenderMs: 0,
   weBassAvg: 0.01,
   weBeatEnv: 0,
   weLyricsCache: new Map(),
@@ -324,7 +383,42 @@ const state = {
 let hudTimer = null;
 let toastTimer = null;
 
-function showHud() {
+function scheduleTick() {
+  if (state.rafScheduled || state.wePaused || state.docHiddenPaused) return;
+  state.rafScheduled = true;
+  requestAnimationFrame(tick);
+}
+
+function recomputeBottomClearY() {
+  const vh = window.innerHeight || 900;
+  let clearY = vh - 48;
+  const playerVisible =
+    Boolean(state.settings.showPlayerControls) &&
+    (!state.wallpaperModeActive || state.weEnv);
+
+  if (playerVisible) {
+    const ph = state.playerBarHeight > 0 ? state.playerBarHeight : 78;
+    clearY = Math.min(clearY, vh - 44 - ph - 16);
+  }
+
+  if (state.settings.showBottomLine) {
+    const bottomCssOffset = playerVisible ? 138 : 34;
+    if (!state.bottomWrapHidden && state.bottomWrapHeight > 0) {
+      clearY = Math.min(clearY, vh - bottomCssOffset - state.bottomWrapHeight - 20);
+    } else {
+      clearY = Math.min(clearY, playerVisible ? vh - 216 : vh - 116);
+    }
+  }
+  state.cachedBottomClearY = clearY;
+}
+
+function showHud(forceResetTimer = true) {
+  if (state.wallpaperModeActive) return;
+  const now = performance.now();
+  if (!forceResetTimer && now - state.lastHudWakeMs < 250) {
+    return;
+  }
+  state.lastHudWakeMs = now;
   document.body.classList.add('hud-visible');
   document.body.classList.remove('hud-idle');
   clearTimeout(hudTimer);
@@ -339,7 +433,7 @@ function showHud() {
 function showToast(msg) {
   elToast.textContent = msg;
   elToast.classList.add('show');
-  showHud();
+  showHud(true);
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     elToast.classList.remove('show');
@@ -438,6 +532,28 @@ function resolveFontSpec(s) {
   return { fontFamily: preset.family, fontStyle: preset.style };
 }
 
+function applyThemeCssVariables(themeId) {
+  const theme = COLOR_THEMES[themeId] || COLOR_THEMES.starlight;
+  if (state.appliedThemeId === theme.id) return;
+  state.appliedThemeId = theme.id;
+
+  const rootStyle = document.documentElement.style;
+  rootStyle.setProperty('--bg', theme.bg);
+  rootStyle.setProperty('--brand-color', theme.brand);
+  rootStyle.setProperty('--text', theme.text);
+  rootStyle.setProperty('--text-muted', theme.textMuted);
+  rootStyle.setProperty('--hud-border', theme.hudBorder);
+  rootStyle.setProperty('--hud-border-strong', theme.hudBorderStrong);
+  rootStyle.setProperty('--hud-hover', theme.hudHover);
+  rootStyle.setProperty('--hud-active', theme.hudActive);
+  rootStyle.setProperty('--panel-bg', theme.panelBg);
+  rootStyle.setProperty('--panel-solid', theme.panelSolid);
+  rootStyle.setProperty('--input-bg', theme.inputBg);
+  rootStyle.setProperty('--word-idle', theme.wordIdle);
+  rootStyle.setProperty('--word-glow', theme.wordGlow);
+  rootStyle.setProperty('--word-past-glow', theme.wordPastGlow);
+}
+
 async function registerCustomFontBuffer(buffer, fileName, persistDataUrl = true) {
   if (typeof FontFace === 'undefined' || !document.fonts) {
     showToast('Custom font files unsupported in this browser');
@@ -503,14 +619,33 @@ function clearCustomFont(resetPreset = true) {
   applySettingsToApp(true);
 }
 
+function formatOffsetLabel(sec) {
+  const clean = Math.abs(sec) < 0.04 ? 0 : sec;
+  return `${clean >= 0 ? '+' : ''}${clean.toFixed(1)}s`;
+}
+
+function setSyncOffset(nextSec, announce = false, persist = true) {
+  const clamped = Math.max(-5.0, Math.min(5.0, Math.round((Number(nextSec) || 0) * 10) / 10));
+  state.syncOffsetSec = clamped;
+  state.settings.syncOffsetSec = clamped;
+  if (optSyncOffset) optSyncOffset.value = String(clamped);
+  valOffset.textContent = formatOffsetLabel(clamped);
+  if (persist) saveSettings(state.settings);
+  if (announce) showToast(`Lyric offset: ${valOffset.textContent}`);
+}
+
 function applySettingsToApp(persist = true) {
   const s = state.settings;
+  const themeId = COLOR_THEMES[s.colorTheme] ? s.colorTheme : 'starlight';
+  s.colorTheme = themeId;
   const { fontFamily, fontStyle } = resolveFontSpec(s);
 
+  applyThemeCssVariables(themeId);
   document.documentElement.style.setProperty('--font-family', fontFamily);
   document.documentElement.style.setProperty('--font-style', fontStyle);
 
   visualizer.applySettings({
+    colorTheme: themeId,
     starBrightness: s.starBrightness,
     effectsIntensity: s.effectsIntensity,
     lineOpacity: s.lineOpacity,
@@ -535,6 +670,7 @@ function applySettingsToApp(persist = true) {
   document.body.classList.toggle('we-allow-player', Boolean(state.weEnv && s.showPlayerControls));
   btnExplore.classList.toggle('active', Boolean(s.freeExplore));
 
+  if (optColorTheme) optColorTheme.value = themeId;
   optBrightness.value = String(s.starBrightness);
   valBrightness.textContent = `${s.starBrightness.toFixed(2)}×`;
   optEffects.value = String(s.effectsIntensity);
@@ -584,7 +720,8 @@ function applySettingsToApp(persist = true) {
     optCustomFontName.value = s.customFontName || '';
   }
   valFontFile.textContent = state.customFontLoadedName || 'None';
-  valOffset.textContent = `${state.syncOffsetSec >= 0 ? '+' : ''}${state.syncOffsetSec.toFixed(1)}s`;
+  if (optSyncOffset) optSyncOffset.value = String(state.syncOffsetSec);
+  valOffset.textContent = formatOffsetLabel(state.syncOffsetSec);
 
   if (s.freeExplore) {
     const nearest = state.lastExploreNearestIdx >= 0 ? state.lastExploreNearestIdx : state.currentConstellationIndex;
@@ -592,6 +729,7 @@ function applySettingsToApp(persist = true) {
   } else {
     updateFactCard();
   }
+  recomputeBottomClearY();
   appWindow?.setAlwaysOnTop?.(Boolean(s.alwaysOnTop)).catch(() => {});
 
   if (persist) {
@@ -628,7 +766,23 @@ function setSettingsOpen(open) {
   document.body.classList.toggle('settings-open', open);
   btnSettings.classList.toggle('active', open);
   settingsDrawer.setAttribute('aria-hidden', open ? 'false' : 'true');
-  showHud();
+  showHud(true);
+}
+
+function hideBottomLyricLine(clearContents = false) {
+  if (!state.bottomWrapHidden) {
+    state.bottomWrapHidden = true;
+    elBottomLineWrap.classList.add('hidden');
+    recomputeBottomClearY();
+  }
+  if (clearContents) {
+    state.lastBottomKey = '';
+    state.bottomWordSpans = [];
+    state.bottomSpanStates = new Uint8Array(0);
+    state.bottomSpanFillSteps = new Int16Array(0);
+    elBottomLine.textContent = '';
+    elBottomLineNext.textContent = '';
+  }
 }
 
 function applyMediaUpdate(media) {
@@ -650,17 +804,15 @@ function applyMediaUpdate(media) {
     state.currentTrackKey = trackKey;
     state.lyrics = { trackKey, found: false, synced: false, wordSynced: false, lines: [], plainText: null, source: 'none' };
     state.lyricsLoading = Boolean(trackKey);
+    state.lyricHintIdx = 0;
     state.lastLineIndex = -1;
-    state.lastBottomKey = '';
     state.clockPosSec = media.positionSec || 0;
     visualizer.lastActiveWordKey = '';
     for (const b of visualizer.wordBubbles.values()) {
       b.isCurrent = false;
       b.fastFade = true;
     }
-    elBottomLineWrap.classList.add('hidden');
-    elBottomLine.textContent = '';
-    elBottomLineNext.textContent = '';
+    hideBottomLyricLine(true);
     resetConstellationWordBudget();
     if (trackKey) {
       const startIdx = hashTrackKey(trackKey) % CONSTELLATIONS.length;
@@ -701,12 +853,10 @@ function applyLyricsLoading(info) {
     plainText: null,
     source: 'none',
   };
+  state.lyricHintIdx = 0;
   state.lastLineIndex = -1;
-  state.lastBottomKey = '';
   visualizer.lastActiveWordKey = '';
-  elBottomLineWrap.classList.add('hidden');
-  elBottomLine.textContent = '';
-  elBottomLineNext.textContent = '';
+  hideBottomLyricLine(true);
   updateHudText();
 }
 
@@ -718,6 +868,7 @@ function applyLyricsUpdate(payload, keepLoadingIfEmpty = false) {
     state.lyricsLoading = false;
   }
   state.lyrics = payload || { found: false, synced: false, wordSynced: false, lines: [], source: 'none' };
+  state.lyricHintIdx = 0;
   state.lastLineIndex = -1;
   state.lastBottomKey = '';
   resetConstellationWordBudget();
@@ -747,29 +898,54 @@ function formatProviderBadge(lyrics) {
   return 'NO LYRICS';
 }
 
-function formatTime(sec) {
-  const s = Math.max(0, Math.floor(sec || 0));
-  const mins = Math.floor(s / 60);
+function formatTimeFromInt(secInt) {
+  const s = secInt > 0 ? secInt : 0;
+  const mins = (s / 60) | 0;
   const rem = s % 60;
   return `${mins}:${rem < 10 ? '0' : ''}${rem}`;
 }
 
-function updatePlayerProgress(posSec, durSec) {
-  const safeDur = Math.max(0, Number(durSec) || 0);
-  const safePos = Math.max(0, safeDur > 0 ? Math.min(safeDur, Number(posSec) || 0) : (Number(posSec) || 0));
+function updatePlayerProgress(posSec, durSec, nowMs = 0) {
+  if (state.playerSeeking) return;
+  if (!state.settings.showPlayerControls || (state.wallpaperModeActive && !state.weEnv)) {
+    return;
+  }
 
-  if (!state.playerSeeking) {
-    elPlayerTimeCur.textContent = formatTime(safePos);
-    elPlayerTimeDur.textContent = formatTime(safeDur);
-    if (safeDur > 0) {
-      elPlayerSeek.max = String(safeDur);
-      elPlayerSeek.value = String(safePos);
-      elPlayerSeek.disabled = !state.demoMode && !invoke;
-    } else {
-      elPlayerSeek.max = '100';
-      elPlayerSeek.value = '0';
-      elPlayerSeek.disabled = true;
+  const safeDur = durSec > 0 ? durSec : 0;
+  const rawPos = posSec > 0 ? posSec : 0;
+  const safePos = safeDur > 0 && rawPos > safeDur ? safeDur : rawPos;
+
+  const curInt = safePos | 0;
+  const durInt = safeDur | 0;
+  if (curInt !== state.lastCurSecInt) {
+    state.lastCurSecInt = curInt;
+    elPlayerTimeCur.textContent = formatTimeFromInt(curInt);
+  }
+  if (durInt !== state.lastDurSecInt) {
+    state.lastDurSecInt = durInt;
+    elPlayerTimeDur.textContent = formatTimeFromInt(durInt);
+  }
+
+  if (safeDur > 0) {
+    const wantDisabled = !state.demoMode && !invoke;
+    if (state.lastSeekDisabled !== wantDisabled) {
+      state.lastSeekDisabled = wantDisabled;
+      elPlayerSeek.disabled = wantDisabled;
     }
+    if (state.lastSeekMax !== safeDur) {
+      state.lastSeekMax = safeDur;
+      elPlayerSeek.max = String(safeDur);
+    }
+    if (!nowMs || nowMs - state.lastSeekUpdateMs >= 65) {
+      state.lastSeekUpdateMs = nowMs;
+      elPlayerSeek.value = String(Math.round(safePos * 10) * 0.1);
+    }
+  } else if (state.lastSeekMax !== 0) {
+    state.lastSeekMax = 0;
+    state.lastSeekDisabled = true;
+    elPlayerSeek.max = '100';
+    elPlayerSeek.value = '0';
+    elPlayerSeek.disabled = true;
   }
 }
 
@@ -846,7 +1022,7 @@ function updateHudText() {
     elPlayerArtist.textContent = 'Play any song on Windows, or press D for demo';
     elPlayerSourceBadge.textContent = 'IDLE';
     elPlayerArt.classList.add('hidden');
-    updatePlayerProgress(0, 0);
+    updatePlayerProgress(0, 0, 0);
     return;
   }
 
@@ -866,95 +1042,152 @@ function updateHudText() {
   elPlayerSourceBadge.textContent = badge;
 }
 
+/**
+ * O(1) sequential cursor hit + O(log N) binary search fallback, mutating `ACTIVE_LYRIC_FRAME`
+ * in place so zero objects are allocated per frame.
+ */
 function getActiveLyricFrame(lines, timeSec) {
-  if (!lines || lines.length === 0) {
-    return { lineIndex: -1, lineKey: '', activeWordIndex: -1, words: [], lineProgress: 0, text: '', nextText: '' };
-  }
+  const len = lines ? lines.length : 0;
+  if (len === 0) return EMPTY_LYRIC_FRAME;
 
   let foundIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    if (timeSec >= l.timeSec && timeSec < l.endSec) {
-      foundIdx = i;
-      break;
+  const hint = state.lyricHintIdx;
+
+  // Fast O(1) path for sequential playback (same line or immediate next line)
+  if (hint >= 0 && hint < len) {
+    const hLine = lines[hint];
+    if (timeSec >= hLine.timeSec && timeSec < hLine.endSec) {
+      foundIdx = hint;
+    } else if (hint + 1 < len) {
+      const nextCand = lines[hint + 1];
+      if (timeSec >= nextCand.timeSec && timeSec < nextCand.endSec) {
+        foundIdx = hint + 1;
+      }
     }
   }
 
+  // O(log N) binary search fallback on seeks or instrumental gaps
   if (foundIdx === -1) {
-    return { lineIndex: -1, lineKey: '', activeWordIndex: -1, words: [], lineProgress: 0, text: '', nextText: '' };
+    let lo = 0;
+    let hi = len - 1;
+    let cand = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      if (lines[mid].timeSec <= timeSec) {
+        cand = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (cand >= 0 && timeSec < lines[cand].endSec) {
+      foundIdx = cand;
+    }
   }
+
+  if (foundIdx === -1) return EMPTY_LYRIC_FRAME;
+  state.lyricHintIdx = foundIdx;
 
   const line = lines[foundIdx];
   const nextLine = lines[foundIdx + 1] || (state.demoMode ? lines[0] : null);
   const duration = Math.max(0.35, line.endSec - line.timeSec);
   const progress = Math.max(0, Math.min(1, (timeSec - line.timeSec) / duration));
 
+  const words = line.words || EMPTY_WORDS;
   let activeWordIndex = -1;
-  for (let wi = 0; wi < line.words.length; wi++) {
-    if (progress >= line.words[wi].offsetRatio) {
+  for (let wi = 0, wLen = words.length; wi < wLen; wi++) {
+    if (progress >= words[wi].offsetRatio) {
       activeWordIndex = wi;
     } else {
       break;
     }
   }
 
-  return {
-    lineIndex: foundIdx,
-    lineKey: `${state.demoMode ? 'demo' : state.currentTrackKey}#${foundIdx}`,
-    activeWordIndex,
-    words: line.words,
-    lineProgress: progress,
-    text: line.text,
-    nextText: nextLine ? nextLine.text : '',
-  };
+  const out = ACTIVE_LYRIC_FRAME;
+  out.lineIndex = foundIdx;
+  if (out.lineIndex !== state.lastLineIndex || !out.lineKey) {
+    out.lineKey = `${state.demoMode ? 'demo' : state.currentTrackKey}#${foundIdx}`;
+  }
+  out.activeWordIndex = activeWordIndex;
+  out.words = words;
+  out.lineProgress = progress;
+  out.text = line.text;
+  out.nextText = nextLine ? nextLine.text : '';
+  return out;
 }
 
 function renderBottomLyric(frame, pauseExpired = false) {
   if (!state.settings.showBottomLine || !frame.text || pauseExpired) {
-    elBottomLineWrap.classList.add('hidden');
+    hideBottomLyricLine(false);
     return;
   }
 
-  elBottomLineWrap.classList.remove('hidden');
+  if (state.bottomWrapHidden) {
+    state.bottomWrapHidden = false;
+    elBottomLineWrap.classList.remove('hidden');
+    recomputeBottomClearY();
+  }
 
   if (frame.lineKey !== state.lastBottomKey) {
     state.lastBottomKey = frame.lineKey;
-    elBottomLine.textContent = '';
-    const spans = [];
-    const words = frame.words || [];
-    for (let i = 0; i < words.length; i++) {
+    const words = frame.words || EMPTY_WORDS;
+    const wLen = words.length;
+    const frag = document.createDocumentFragment();
+    const spans = new Array(wLen);
+
+    for (let i = 0; i < wLen; i++) {
       const sp = document.createElement('span');
       sp.className = 'am-word';
       sp.textContent = words[i].text;
-      elBottomLine.appendChild(sp);
-      spans.push(sp);
+      frag.appendChild(sp);
+      spans[i] = sp;
     }
+
+    elBottomLine.textContent = '';
+    elBottomLine.appendChild(frag);
     state.bottomWordSpans = spans;
+    state.bottomSpanStates = new Uint8Array(wLen); // 0 = idle, 1 = active, 2 = past
+    state.bottomSpanFillSteps = new Int16Array(wLen).fill(-1);
     elBottomLineNext.textContent = frame.nextText || '';
   }
 
   const spans = state.bottomWordSpans;
-  const words = frame.words || [];
+  const spanStates = state.bottomSpanStates;
+  const fillSteps = state.bottomSpanFillSteps;
+  const words = frame.words || EMPTY_WORDS;
   const p = frame.lineProgress || 0;
 
-  for (let i = 0; i < spans.length; i++) {
-    const sp = spans[i];
+  for (let i = 0, sLen = spans.length; i < sLen; i++) {
     const w = words[i];
     if (!w) continue;
     const wStart = w.offsetRatio;
-    const wDur = Math.max(0.03, w.durationRatio || 0.08);
+    const wDur = w.durationRatio > 0.03 ? w.durationRatio : 0.08;
     const wEnd = wStart + wDur;
 
     if (p >= wEnd) {
-      sp.classList.remove('is-active');
-      sp.classList.add('is-past');
+      if (spanStates[i] !== 2) {
+        const sp = spans[i];
+        if (spanStates[i] === 1) sp.classList.remove('is-active');
+        sp.classList.add('is-past');
+        spanStates[i] = 2;
+      }
     } else if (p >= wStart) {
+      const sp = spans[i];
+      if (spanStates[i] !== 1) {
+        if (spanStates[i] === 2) sp.classList.remove('is-past');
+        sp.classList.add('is-active');
+        spanStates[i] = 1;
+      }
       const fillPct = Math.max(0, Math.min(100, ((p - wStart) / wDur) * 100));
-      sp.classList.remove('is-past');
-      sp.classList.add('is-active');
-      sp.style.setProperty('--fill', `${fillPct.toFixed(1)}%`);
-    } else {
-      sp.classList.remove('is-active', 'is-past');
+      const step = (fillPct * 2 + 0.5) | 0; // 0.5% quantization step
+      if (fillSteps[i] !== step) {
+        fillSteps[i] = step;
+        sp.style.setProperty('--fill', `${(step * 0.5).toFixed(1)}%`);
+      }
+    } else if (spanStates[i] !== 0) {
+      spans[i].classList.remove('is-active', 'is-past');
+      spanStates[i] = 0;
+      fillSteps[i] = -1;
     }
   }
 }
@@ -975,7 +1208,6 @@ function handleSoftWordLimit(lyric) {
 
       const limit = state.settings.softWordLimit;
       if (state.wordsShownOnConstellation >= limit + 6) {
-        // Hard safety ceiling if a single line is extraordinarily long
         switchToNextTourConstellation();
       } else if (state.wordsShownOnConstellation >= limit) {
         state.pendingRotation = true;
@@ -984,47 +1216,61 @@ function handleSoftWordLimit(lyric) {
   }
 }
 
+function hideInspector() {
+  if (!state.inspectorHidden) {
+    state.inspectorHidden = true;
+    elInspector.classList.add('hidden');
+    state.lastInspectedKey = '';
+  }
+}
+
 function updateStarInspector() {
   if (!state.settings.hoverInspector || !state.pointer.inside || state.settingsOpen || state.drag.active) {
-    visualizer.hitTest(-9999, -9999);
-    if (!elInspector.classList.contains('hidden')) {
-      elInspector.classList.add('hidden');
-      state.lastInspectedKey = '';
-    }
+    if (visualizer.hoveredTarget) visualizer.hitTest(-9999, -9999);
+    hideInspector();
     return;
   }
 
   const hit = visualizer.hitTest(state.pointer.x, state.pointer.y);
   if (!hit) {
-    if (!elInspector.classList.contains('hidden')) {
-      elInspector.classList.add('hidden');
-      state.lastInspectedKey = '';
-    }
+    hideInspector();
     return;
   }
 
   const key = `${hit.kind}:${hit.name}:${hit.meta || ''}`;
+  let needsMeasure = false;
   if (key !== state.lastInspectedKey) {
     state.lastInspectedKey = key;
-    elInspDot.style.background = hit.color || '#cfe4ff';
-    elInspDot.style.boxShadow = `0 0 8px ${hit.color || '#cfe4ff'}`;
+    const dotCol = hit.color || visualizer.theme.brand;
+    elInspDot.style.background = dotCol;
+    elInspDot.style.boxShadow = `0 0 8px ${dotCol}`;
     elInspName.textContent = hit.name;
     elInspKind.textContent = hit.kind;
     elInspMeta.textContent = hit.meta || '';
     elInspNote.textContent = hit.note || '';
+    needsMeasure = true;
   }
 
-  elInspector.classList.remove('hidden');
+  if (state.inspectorHidden) {
+    state.inspectorHidden = false;
+    elInspector.classList.remove('hidden');
+    needsMeasure = true;
+  }
+
+  if (needsMeasure) {
+    state.inspectorWidth = elInspector.offsetWidth || 240;
+    state.inspectorHeight = elInspector.offsetHeight || 88;
+  }
+
   const margin = 12;
-  const w = elInspector.offsetWidth || 240;
-  const h = elInspector.offsetHeight || 88;
-  const tx = Math.max(margin, Math.min(window.innerWidth - w - margin, state.pointer.x + 16));
-  const ty = Math.max(margin, Math.min(window.innerHeight - h - margin, state.pointer.y + 16));
+  const tx = Math.max(margin, Math.min(window.innerWidth - state.inspectorWidth - margin, state.pointer.x + 16));
+  const ty = Math.max(margin, Math.min(window.innerHeight - state.inspectorHeight - margin, state.pointer.y + 16));
   elInspector.style.transform = `translate(${Math.round(tx)}px, ${Math.round(ty)}px)`;
 }
 
 function tick() {
-  if (state.wePaused) {
+  state.rafScheduled = false;
+  if (state.wePaused || state.docHiddenPaused) {
     return;
   }
 
@@ -1038,70 +1284,52 @@ function tick() {
     state.clockPosSec += rawDt;
   }
 
-  let frame;
+  const rf = RENDER_FRAME_STATE;
+  let lyric;
   if (state.demoMode) {
     const demoTime = ((nowMs - state.demoStartMs) / 1000) % 17.5;
-    const lyric = getActiveLyricFrame(DEMO_LINES, demoTime);
+    lyric = getActiveLyricFrame(DEMO_LINES, demoTime);
     handleSoftWordLimit(lyric);
-    updatePlayerProgress(demoTime, 17.5);
-    frame = {
-      isPlaying: true,
-      hasSyncedLyrics: true,
-      ...lyric,
-    };
+    updatePlayerProgress(demoTime, 17.5, nowMs);
+    rf.isPlaying = true;
+    rf.hasSyncedLyrics = true;
   } else {
     const isPlaying = state.media.hasSession && state.media.status === 'Playing';
     const hasSynced = Boolean(state.lyrics.synced && state.lyrics.lines?.length);
-    const effectiveTime = state.clockPosSec + state.syncOffsetSec;
-    const lyric = hasSynced
-      ? getActiveLyricFrame(state.lyrics.lines, effectiveTime)
-      : { lineIndex: -1, lineKey: '', activeWordIndex: -1, words: [], lineProgress: 0, text: '' };
+    lyric = hasSynced
+      ? getActiveLyricFrame(state.lyrics.lines, state.clockPosSec + state.syncOffsetSec)
+      : EMPTY_LYRIC_FRAME;
 
     if (hasSynced) {
       handleSoftWordLimit(lyric);
     }
     if (state.media.hasSession) {
-      updatePlayerProgress(state.clockPosSec, state.media.endSec || 0);
+      updatePlayerProgress(state.clockPosSec, state.media.endSec || 0, nowMs);
     }
-
-    frame = {
-      isPlaying,
-      hasSyncedLyrics: hasSynced,
-      ...lyric,
-    };
+    rf.isPlaying = isPlaying;
+    rf.hasSyncedLyrics = hasSynced;
   }
 
-  const animDt = Math.min(0.05, rawDt);
-  if (frame.isPlaying) {
+  rf.lineIndex = lyric.lineIndex;
+  rf.lineKey = lyric.lineKey;
+  rf.activeWordIndex = lyric.activeWordIndex;
+  rf.words = lyric.words;
+  rf.lineProgress = lyric.lineProgress;
+  rf.text = lyric.text;
+  rf.nextText = lyric.nextText;
+  rf.audio = state.audioLevels;
+
+  const animDt = rawDt < 0.05 ? rawDt : 0.05;
+  if (rf.isPlaying) {
     state.pausedBottomSec = 0;
   } else {
     state.pausedBottomSec += animDt;
   }
-  const bottomExpired = !frame.isPlaying && state.pausedBottomSec >= (state.settings.lyricDecaySec ?? 2.5);
-  renderBottomLyric(frame, bottomExpired);
+  const bottomExpired = !rf.isPlaying && state.pausedBottomSec >= (state.settings.lyricDecaySec ?? 2.5);
+  renderBottomLyric(rf, bottomExpired);
 
-  let bottomClearY = window.innerHeight - 48;
-  if (state.settings.showPlayerControls && elPlayerBar) {
-    const pRect = elPlayerBar.getBoundingClientRect();
-    bottomClearY = Math.min(
-      bottomClearY,
-      pRect.height > 0 ? pRect.top - 16 : window.innerHeight - 138
-    );
-  }
-  if (state.settings.showBottomLine && elBottomLineWrap) {
-    const bVisible = !elBottomLineWrap.classList.contains('hidden');
-    if (bVisible) {
-      const bRect = elBottomLineWrap.getBoundingClientRect();
-      if (bRect.height > 0) bottomClearY = Math.min(bottomClearY, bRect.top - 20);
-    } else {
-      bottomClearY = Math.min(
-        bottomClearY,
-        state.settings.showPlayerControls ? window.innerHeight - 216 : window.innerHeight - 116
-      );
-    }
-  }
-
-  visualizer.render({ ...frame, audio: state.audioLevels, bottomClearY });
+  rf.bottomClearY = state.cachedBottomClearY;
+  visualizer.render(rf);
 
   // Free Explore: keep Fact Card and dropdown synced with whichever constellation is centered
   if (state.settings.freeExplore) {
@@ -1114,7 +1342,7 @@ function tick() {
   }
 
   // Instrumental Solo Mode: update badge and gently tour sky every 16s during solos/instrumentals
-  const soloActive = Boolean(visualizer.isInstrumentalActive && frame.isPlaying);
+  const soloActive = Boolean(visualizer.isInstrumentalActive && rf.isPlaying);
   if (soloActive !== state.wasInstrumentalSolo) {
     state.wasInstrumentalSolo = soloActive;
     updateHudText();
@@ -1130,13 +1358,14 @@ function tick() {
   }
 
   updateStarInspector();
-  requestAnimationFrame(tick);
+  scheduleTick();
 }
 
 function toggleDemo() {
   state.demoMode = !state.demoMode;
   btnDemo.classList.toggle('active', state.demoMode);
   optDemoMode.checked = state.demoMode;
+  state.lyricHintIdx = 0;
   state.lastLineIndex = -1;
   resetConstellationWordBudget();
   if (state.demoMode) {
@@ -1149,9 +1378,8 @@ function toggleDemo() {
 }
 
 function adjustOffset(delta) {
-  state.syncOffsetSec = delta === 0 ? 0 : Math.round((state.syncOffsetSec + delta) * 10) / 10;
-  valOffset.textContent = `${state.syncOffsetSec >= 0 ? '+' : ''}${state.syncOffsetSec.toFixed(1)}s`;
-  showToast(`Lyric offset: ${valOffset.textContent}`);
+  const next = delta === 0 ? 0 : state.syncOffsetSec + delta;
+  setSyncOffset(next, true, true);
 }
 
 async function toggleFullscreen() {
@@ -1165,13 +1393,15 @@ async function toggleFullscreen() {
 }
 
 function populateConstellationSelect() {
-  optConstellation.innerHTML = '';
+  const frag = document.createDocumentFragment();
   CONSTELLATIONS.forEach((c, idx) => {
     const opt = document.createElement('option');
     opt.value = String(idx);
     opt.textContent = `${c.name} — ${c.title}`;
-    optConstellation.appendChild(opt);
+    frag.appendChild(opt);
   });
+  optConstellation.textContent = '';
+  optConstellation.appendChild(frag);
   optConstellation.value = String(state.currentConstellationIndex);
 }
 
@@ -1186,13 +1416,49 @@ function adjustZoom(delta, showMsg = true) {
   }
 }
 
+function setupLayoutObservers() {
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver((entries) => {
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        const borderH = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+        if (entry.target === elPlayerBar) {
+          state.playerBarHeight = borderH;
+        } else if (entry.target === elBottomLineWrap) {
+          state.bottomWrapHeight = borderH;
+        }
+      }
+      recomputeBottomClearY();
+    });
+    if (elPlayerBar) ro.observe(elPlayerBar);
+    if (elBottomLineWrap) ro.observe(elBottomLineWrap);
+  }
+  recomputeBottomClearY();
+}
+
 function wireControls() {
   populateConstellationSelect();
+  setupLayoutObservers();
   applySettingsToApp(false);
 
-  window.addEventListener('resize', () => visualizer.resize());
+  window.addEventListener('resize', () => {
+    visualizer.resize();
+    recomputeBottomClearY();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (state.weEnv) return;
+    const shouldPause = Boolean(document.hidden);
+    if (state.docHiddenPaused === shouldPause) return;
+    state.docHiddenPaused = shouldPause;
+    if (!shouldPause) {
+      state.lastTickMs = performance.now();
+      scheduleTick();
+    }
+  });
+
   window.addEventListener('mousemove', (e) => {
-    showHud();
+    showHud(false);
     if (e.target === canvas) {
       state.pointer.x = e.clientX;
       state.pointer.y = e.clientY;
@@ -1251,7 +1517,7 @@ function wireControls() {
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
   window.addEventListener('mousedown', (e) => {
-    showHud();
+    showHud(true);
     if (
       state.settingsOpen &&
       !e.target.closest('#settings-drawer') &&
@@ -1299,7 +1565,9 @@ function wireControls() {
 
   elPlayerSeek.addEventListener('input', () => {
     state.playerSeeking = true;
-    elPlayerTimeCur.textContent = formatTime(parseFloat(elPlayerSeek.value) || 0);
+    const secInt = (parseFloat(elPlayerSeek.value) || 0) | 0;
+    state.lastCurSecInt = secInt;
+    elPlayerTimeCur.textContent = formatTimeFromInt(secInt);
   });
 
   elPlayerSeek.addEventListener('change', () => {
@@ -1351,6 +1619,14 @@ function wireControls() {
   });
 
   // Sliders & selects inside QoL drawer
+  if (optColorTheme) {
+    optColorTheme.addEventListener('change', () => {
+      state.settings.colorTheme = optColorTheme.value;
+      applySettingsToApp(true);
+      const label = COLOR_THEMES[optColorTheme.value]?.label || optColorTheme.value;
+      showToast(`Theme: ${label}`);
+    });
+  }
   optBrightness.addEventListener('input', () => {
     state.settings.starBrightness = parseFloat(optBrightness.value);
     applySettingsToApp(true);
@@ -1529,6 +1805,14 @@ function wireControls() {
     if (optDemoMode.checked !== state.demoMode) toggleDemo();
   });
 
+  if (optSyncOffset) {
+    optSyncOffset.addEventListener('input', () => {
+      setSyncOffset(parseFloat(optSyncOffset.value) || 0, false, true);
+    });
+    optSyncOffset.addEventListener('change', () => {
+      setSyncOffset(parseFloat(optSyncOffset.value) || 0, true, true);
+    });
+  }
   btnOffsetMinus.addEventListener('click', () => adjustOffset(-0.2));
   btnOffsetReset.addEventListener('click', () => adjustOffset(0));
   btnOffsetPlus.addEventListener('click', () => adjustOffset(0.2));
@@ -1571,6 +1855,7 @@ function wireControls() {
   btnResetDefaults.addEventListener('click', () => {
     const wasExplore = state.settings.freeExplore;
     state.settings = { ...DEFAULT_SETTINGS };
+    state.syncOffsetSec = 0;
     if (wasExplore) visualizer.setFreeExplore(false);
     clearCustomFont(false);
     applySettingsToApp(true);
@@ -1630,7 +1915,7 @@ function wireControls() {
     } else if (e.key === 'd' || e.key === 'D') {
       toggleDemo();
     } else if (e.key === 'w' || e.key === 'W') {
-      const next = !document.body.classList.contains('wallpaper-mode');
+      const next = !state.wallpaperModeActive;
       applyWallpaperMode(next);
       if (!next) showToast('HUD restored (press W for clean wallpaper mode)');
     } else if (e.key === 'r' || e.key === 'R') {
@@ -1658,8 +1943,11 @@ function wireControls() {
 }
 
 function applyWallpaperMode(enabled) {
-  document.body.classList.toggle('wallpaper-mode', Boolean(enabled));
+  const next = Boolean(enabled);
+  state.wallpaperModeActive = next;
+  document.body.classList.toggle('wallpaper-mode', next);
   visualizer.resize();
+  recomputeBottomClearY();
 }
 
 async function lookupBrowserLyrics(force = false) {
@@ -1694,6 +1982,10 @@ async function lookupBrowserLyrics(force = false) {
   );
   if (myGen !== state.browserLookupGen) return;
   if (result.found) {
+    if (state.weLyricsCache.size >= 64) {
+      const oldestKey = state.weLyricsCache.keys().next().value;
+      state.weLyricsCache.delete(oldestKey);
+    }
     state.weLyricsCache.set(trackKey, result);
   }
   applyLyricsUpdate(result);
@@ -1702,16 +1994,27 @@ async function lookupBrowserLyrics(force = false) {
 function handleWallpaperAudioArray(audioArray) {
   if (!audioArray || audioArray.length === 0) return;
   // Wallpaper Engine delivers 128 floats: 0..63 left channel, 64..127 right channel
-  const half = Math.min(64, Math.floor(audioArray.length / 2) || audioArray.length);
+  const len = audioArray.length;
+  const half = Math.min(64, (len >> 1) || len);
+  const hasStereo = len >= half * 2;
   let bass = 0;
   let mid = 0;
   let treble = 0;
   let total = 0;
 
   for (let i = 0; i < half; i++) {
-    const l = Math.min(1.5, Math.max(0, audioArray[i] || 0));
-    const r = audioArray.length >= half * 2 ? Math.min(1.5, Math.max(0, audioArray[i + half] || 0)) : l;
-    const v = (l + r) * 0.5;
+    let l = audioArray[i] || 0;
+    if (l < 0) l = 0;
+    else if (l > 1.5) l = 1.5;
+
+    let v = l;
+    if (hasStereo) {
+      let r = audioArray[i + half] || 0;
+      if (r < 0) r = 0;
+      else if (r > 1.5) r = 1.5;
+      v = (l + r) * 0.5;
+    }
+
     total += v;
     if (i < 6) bass += v;
     else if (i < 28) mid += v;
@@ -1730,13 +2033,12 @@ function handleWallpaperAudioArray(audioArray) {
     state.weBeatEnv *= 0.82;
   }
 
-  state.audioLevels = {
-    bass: nBass,
-    mid: nMid,
-    treble: nTreble,
-    rms: nRms,
-    beat: state.weBeatEnv,
-  };
+  const al = state.audioLevels;
+  al.bass = nBass;
+  al.mid = nMid;
+  al.treble = nTreble;
+  al.rms = nRms;
+  al.beat = state.weBeatEnv;
 }
 
 function registerWallpaperEngineHooks() {
@@ -1747,6 +2049,7 @@ function registerWallpaperEngineHooks() {
 
   if (hasWeGlobals) {
     state.weEnv = true;
+    state.docHiddenPaused = false;
     document.body.classList.add('we-env');
     applyWallpaperMode(true);
   }
@@ -1756,35 +2059,86 @@ function registerWallpaperEngineHooks() {
     applyUserProperties(props) {
       if (!props) return;
       state.weEnv = true;
+      state.docHiddenPaused = false;
       document.body.classList.add('we-env');
       applyWallpaperMode(true);
 
-      if (props.starbrightness) state.settings.starBrightness = Number(props.starbrightness.value);
-      if (props.effectsintensity) state.settings.effectsIntensity = Number(props.effectsintensity.value);
-      if (props.lineopacity) state.settings.lineOpacity = Number(props.lineopacity.value);
-      if (props.audioreactivity) state.settings.audioReactivity = Number(props.audioreactivity.value);
-      if (props.softwordlimit) state.settings.softWordLimit = Number(props.softwordlimit.value);
-      if (props.rotationspeed) state.settings.rotationSpeed = Number(props.rotationspeed.value);
-      if (props.zoom) state.settings.zoom = Number(props.zoom.value);
-      if (props.wordfontsize) state.settings.wordFontSize = Number(props.wordfontsize.value);
-      if (props.lyricdecay) state.settings.lyricDecaySec = Number(props.lyricdecay.value);
-      if (props.wordeffect) state.settings.wordEffect = String(props.wordeffect.value);
-      if (props.showlabels) state.settings.showLabels = Boolean(props.showlabels.value);
-      if (props.showfactcard) state.settings.showFactCard = Boolean(props.showfactcard.value);
-      if (props.showbottomline) state.settings.showBottomLine = Boolean(props.showbottomline.value);
-      if (props.showplayercontrols) state.settings.showPlayerControls = Boolean(props.showplayercontrols.value);
-      if (props.showdeepsky) state.settings.showDeepSky = Boolean(props.showdeepsky.value);
-      if (props.showsatellites) state.settings.showSatellites = Boolean(props.showsatellites.value);
-      if (props.instrumentalmode) state.settings.instrumentalMode = Boolean(props.instrumentalmode.value);
-      if (props.hoverinspector) state.settings.hoverInspector = Boolean(props.hoverinspector.value);
-      if (props.proportionalsizes) state.settings.proportionalSizes = Boolean(props.proportionalsizes.value);
-      if (props.freeexplore) setFreeExplore(Boolean(props.freeexplore.value), false);
-      if (props.fontpreset) state.settings.fontPreset = String(props.fontpreset.value);
-      if (props.lyricpreferred) {
+      if (props.colortheme && props.colortheme.value !== undefined) {
+        state.settings.colorTheme = String(props.colortheme.value);
+      }
+      if (props.starbrightness && props.starbrightness.value !== undefined) {
+        state.settings.starBrightness = Number(props.starbrightness.value);
+      }
+      if (props.effectsintensity && props.effectsintensity.value !== undefined) {
+        state.settings.effectsIntensity = Number(props.effectsintensity.value);
+      }
+      if (props.lineopacity && props.lineopacity.value !== undefined) {
+        state.settings.lineOpacity = Number(props.lineopacity.value);
+      }
+      if (props.audioreactivity && props.audioreactivity.value !== undefined) {
+        state.settings.audioReactivity = Number(props.audioreactivity.value);
+      }
+      if (props.softwordlimit && props.softwordlimit.value !== undefined) {
+        state.settings.softWordLimit = Number(props.softwordlimit.value);
+      }
+      if (props.rotationspeed && props.rotationspeed.value !== undefined) {
+        state.settings.rotationSpeed = Number(props.rotationspeed.value);
+      }
+      if (props.zoom && props.zoom.value !== undefined) {
+        state.settings.zoom = Number(props.zoom.value);
+      }
+      if (props.wordfontsize && props.wordfontsize.value !== undefined) {
+        state.settings.wordFontSize = Number(props.wordfontsize.value);
+      }
+      if (props.lyricdecay && props.lyricdecay.value !== undefined) {
+        state.settings.lyricDecaySec = Number(props.lyricdecay.value);
+      }
+      if (props.syncoffset && props.syncoffset.value !== undefined) {
+        const off = Math.max(-5.0, Math.min(5.0, Math.round((Number(props.syncoffset.value) || 0) * 10) / 10));
+        state.syncOffsetSec = off;
+        state.settings.syncOffsetSec = off;
+      }
+      if (props.wordeffect && props.wordeffect.value !== undefined) {
+        state.settings.wordEffect = String(props.wordeffect.value);
+      }
+      if (props.showlabels && props.showlabels.value !== undefined) {
+        state.settings.showLabels = Boolean(props.showlabels.value);
+      }
+      if (props.showfactcard && props.showfactcard.value !== undefined) {
+        state.settings.showFactCard = Boolean(props.showfactcard.value);
+      }
+      if (props.showbottomline && props.showbottomline.value !== undefined) {
+        state.settings.showBottomLine = Boolean(props.showbottomline.value);
+      }
+      if (props.showplayercontrols && props.showplayercontrols.value !== undefined) {
+        state.settings.showPlayerControls = Boolean(props.showplayercontrols.value);
+      }
+      if (props.showdeepsky && props.showdeepsky.value !== undefined) {
+        state.settings.showDeepSky = Boolean(props.showdeepsky.value);
+      }
+      if (props.showsatellites && props.showsatellites.value !== undefined) {
+        state.settings.showSatellites = Boolean(props.showsatellites.value);
+      }
+      if (props.instrumentalmode && props.instrumentalmode.value !== undefined) {
+        state.settings.instrumentalMode = Boolean(props.instrumentalmode.value);
+      }
+      if (props.hoverinspector && props.hoverinspector.value !== undefined) {
+        state.settings.hoverInspector = Boolean(props.hoverinspector.value);
+      }
+      if (props.proportionalsizes && props.proportionalsizes.value !== undefined) {
+        state.settings.proportionalSizes = Boolean(props.proportionalsizes.value);
+      }
+      if (props.freeexplore && props.freeexplore.value !== undefined) {
+        setFreeExplore(Boolean(props.freeexplore.value), false);
+      }
+      if (props.fontpreset && props.fontpreset.value !== undefined) {
+        state.settings.fontPreset = String(props.fontpreset.value);
+      }
+      if (props.lyricpreferred && props.lyricpreferred.value !== undefined) {
         state.settings.lyricPreferred = String(props.lyricpreferred.value);
         if (!invoke && state.media.hasSession) lookupBrowserLyrics(true);
       }
-      if (props.demomode) {
+      if (props.demomode && props.demomode.value !== undefined) {
         const wantDemo = Boolean(props.demomode.value);
         if (wantDemo !== state.demoMode) toggleDemo();
       }
@@ -1801,7 +2155,7 @@ function registerWallpaperEngineHooks() {
       state.wePaused = next;
       if (!next) {
         state.lastTickMs = performance.now();
-        requestAnimationFrame(tick);
+        scheduleTick();
       }
     },
   };
@@ -1892,7 +2246,7 @@ function registerWallpaperEngineHooks() {
 async function init() {
   wireControls();
   await restoreSavedCustomFont();
-  showHud();
+  showHud(true);
 
   const hasWallpaperParam = new URLSearchParams(window.location.search).has('wallpaper');
   if (hasWallpaperParam) {
@@ -1904,7 +2258,15 @@ async function init() {
     await listen('lyrics-loading', (event) => applyLyricsLoading(event.payload));
     await listen('lyrics-update', (event) => applyLyricsUpdate(event.payload));
     await listen('audio-levels', (event) => {
-      if (event.payload) state.audioLevels = event.payload;
+      const p = event.payload;
+      if (p) {
+        const al = state.audioLevels;
+        al.bass = p.bass || 0;
+        al.mid = p.mid || 0;
+        al.treble = p.treble || 0;
+        al.rms = p.rms || 0;
+        al.beat = p.beat || 0;
+      }
     });
     await listen('wallpaper-mode', (event) => {
       applyWallpaperMode(Boolean(event.payload));
@@ -1939,7 +2301,7 @@ async function init() {
     }
   }
 
-  requestAnimationFrame(tick);
+  scheduleTick();
 }
 
 registerWallpaperEngineHooks();

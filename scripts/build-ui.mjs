@@ -15,19 +15,55 @@ const moduleFiles = [
   'app.js',
 ];
 
-function stripModuleSyntax(source, filename) {
-  let out = source;
+function stripModuleSyntaxAndCompact(source, filename) {
+  let out = source.replace(/\r\n/g, '\n');
   // Remove single-line or multi-line ES import statements
   out = out.replace(/^\s*import\s+[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '');
   // Strip `export ` prefixes on declarations
   out = out.replace(/^\s*export\s+(?=(?:const|let|var|function|async\s+function|class)\b)/gm, '');
-  return `\n// === ${filename} ===\n${out.trim()}\n`;
+  // Strip standalone JSDoc / block comments that start on their own line
+  out = out.replace(/^\s*\/\*[\s\S]*?\*\/\s*$/gm, '');
+
+  // Safely strip full-line `//` comments & blank lines, and trim indentation outside template literals
+  const lines = out.split('\n');
+  const kept = [];
+  let inTemplate = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    if (!inTemplate) {
+      const trimmed = rawLine.trim();
+      if (!trimmed || trimmed.startsWith('//')) {
+        continue;
+      }
+      kept.push(trimmed);
+    } else {
+      kept.push(rawLine);
+    }
+
+    // Track unescaped backticks to never touch indentation inside multi-line template strings
+    for (let c = 0; c < rawLine.length; c++) {
+      if (rawLine.charCodeAt(c) === 96) {
+        let backslashes = 0;
+        let k = c - 1;
+        while (k >= 0 && rawLine.charCodeAt(k) === 92) {
+          backslashes++;
+          k--;
+        }
+        if ((backslashes & 1) === 0) {
+          inTemplate = !inTemplate;
+        }
+      }
+    }
+  }
+
+  return `// === ${filename} ===\n${kept.join('\n')}`;
 }
 
 const chunks = moduleFiles.map((file) => {
   const fullPath = path.join(uiDir, file);
   const src = fs.readFileSync(fullPath, 'utf8');
-  return stripModuleSyntax(src, file);
+  return stripModuleSyntaxAndCompact(src, file);
 });
 
 const bundled = `// Auto-generated single-file classic bundle for Tauri and Wallpaper Engine CEF (file://).\n(function () {\n'use strict';\n${chunks.join('\n')}\n})();\n`;

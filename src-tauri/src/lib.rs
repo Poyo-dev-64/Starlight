@@ -5,7 +5,7 @@ mod wallpaper;
 
 use lyrics::{LyricProviderPrefs, LyricsPayload, LyricsService};
 use serde::Serialize;
-use smtc::{create_session_manager, poll_session, MediaState};
+use smtc::{create_session_manager, MediaState, SmtcPoller};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -187,6 +187,7 @@ fn start_smtc_thread(
 ) {
     std::thread::spawn(move || {
         let mut manager = None;
+        let mut poller = SmtcPoller::new();
         let mut last_emitted = MediaState::empty(0);
         let mut last_heartbeat = Instant::now();
 
@@ -202,7 +203,7 @@ fn start_smtc_thread(
             }
 
             let state = match manager.as_ref() {
-                Some(mgr) => poll_session(mgr),
+                Some(mgr) => poller.poll(mgr),
                 None => MediaState::empty(smtc::now_unix_ms()),
             };
 
@@ -230,6 +231,7 @@ fn start_smtc_thread(
                 last_heartbeat = Instant::now();
             }
 
+            let has_active_session = state.has_session;
             if track_changed {
                 if track_key.is_empty() {
                     let empty = LyricsPayload::empty(String::new());
@@ -244,7 +246,7 @@ fn start_smtc_thread(
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(250));
+            std::thread::sleep(Duration::from_millis(if has_active_session { 250 } else { 500 }));
         }
     });
 }
