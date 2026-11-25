@@ -4736,6 +4736,14 @@ color: starCol,
 });
 }
 }
+_releaseCurrentLyricBubbles() {
+for (const bubble of this.wordBubbles.values()) {
+if (bubble.isCurrent) {
+bubble.isCurrent = false;
+bubble.fastFade = true;
+}
+}
+}
 _updateLyricIgnition(dt, nowSec, hero, projected, cx, cy, frameState) {
 const starDecay = expSmoothing(dt, 1.8);
 for (let i = 0; i < hero.stars.length; i++) {
@@ -4812,6 +4820,7 @@ this.settings.instrumentalMode &&
 (!hasSyncedLyrics || nowSec - this.lastLyricActivitySec > 4.5)
 ) {
 this.isInstrumentalActive = true;
+this._releaseCurrentLyricBubbles();
 const seq = hero.sequence && hero.sequence.length ? hero.sequence : null;
 const seqLen = seq ? seq.length : hero.stars.length;
 const energy = Math.max(this.audioEnergy.beat, this.audioEnergy.bass * 0.85, this.audioEnergy.mid * 0.75);

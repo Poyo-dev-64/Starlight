@@ -1,0 +1,63 @@
+name: Publish UI and release package
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  package-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build browser bundle
+        run: node scripts/build-ui.mjs
+
+      - name: Create Wallpaper Engine package
+        run: cd ui && zip -r ../starlight-ui.zip . -x '*.map'
+
+      - name: Upload UI package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: starlight-ui
+          path: starlight-ui.zip
+          if-no-files-found: error
+
+      - name: Attach UI package to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: starlight-ui.zip
+          generate_release_notes: true
+
+      - name: Upload GitHub Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ui
+
+  deploy-pages:
+    if: github.ref == 'refs/heads/main'
+    needs: package-ui
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,44 @@
+name: Build desktop binary
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build browser bundle
+        run: node scripts/build-ui.mjs
+
+      - name: Build Windows binary
+        run: cargo build --manifest-path src-tauri/Cargo.toml --release
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: starlight-windows
+          path: src-tauri/target/release/starlight.exe
+          if-no-files-found: error
+
+      - name: Attach binary to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/target/release/starlight.exe
+          generate_release_notes: true
