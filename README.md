@@ -47,7 +47,7 @@ The resulting binary is `src-tauri/target/release/starlight.exe`. `launch.bat` p
 
 ## GitHub Pages
 
-The `Publish UI and release package` workflow publishes the contents of `ui/` to GitHub Pages whenever `main` is pushed. In the repository settings, set Pages source to **GitHub Actions** once. The deployed site starts at `ui/index.html`.
+The `Publish UI and release package` workflow publishes the contents of `ui/` to GitHub Pages whenever `main` is pushed. The deployed site starts at `ui/index.html`.
 
 The browser build remains usable as a visual demo, including Demo Mode. Windows media-session integration and native playback controls require the desktop binary.
 
@@ -59,6 +59,8 @@ Push a version tag such as `v1.0.1` to create release assets:
 - `starlight-ui.zip`, containing the packaged contents of `ui/`, from the UI workflow.
 
 Both workflows also expose their output as downloadable GitHub Actions artifacts on normal builds.
+
+To deploy the UI to GitHub Pages, set the Pages source to **GitHub Actions** in the repository settings once.
 
 ## Development notes
 
