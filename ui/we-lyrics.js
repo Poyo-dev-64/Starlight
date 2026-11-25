@@ -1,5 +1,5 @@
 // Lightweight client-side lyrics engine for standalone browser / Wallpaper Engine Web CEF mode.
-// Uses BetterLyrics (Boidu), LyricsPlus v2, and LRCLIB concurrently and respects provider prefs.
+// Strict provider hierarchy: Preferred Source -> Tier 1 (Limusic, Boidu) -> Tier 2 (LyricsPlus) -> Tier 3 (Unison, LRCLIB, Netease, YT Music, QQ Music, Kugou).
 
 function splitWordsTimed(text) {
   const tokens = String(text || '').trim().split(/\s+/).filter(Boolean);
@@ -16,19 +16,22 @@ function splitWordsTimed(text) {
 }
 
 function cleanTrackMeta(rawArtist, rawTitle) {
-  let artist = String(rawArtist || '').trim();
-  let title = String(rawTitle || '').trim();
-  if (!artist && title.includes(' - ')) {
-    const idx = title.indexOf(' - ');
-    artist = title.slice(0, idx).trim();
-    title = title.slice(idx + 3).trim();
+  let derivedArtist = String(rawArtist || '').trim();
+  let derivedTitle = String(rawTitle || '').trim();
+  if (!derivedArtist && derivedTitle.includes(' - ')) {
+    const idx = derivedTitle.indexOf(' - ');
+    derivedArtist = derivedTitle.slice(0, idx).trim();
+    derivedTitle = derivedTitle.slice(idx + 3).trim();
   }
-  title = title
-    .replace(/\s*[\(\[][^)\]]*(official|lyric|audio|video|remaster|explicit|hd|4k|feat\.|ft\.)[^)\]]*[\)\]]/gi, '')
+  const title = derivedTitle
+    .replace(/\s*[\(\[][^)\]]*(official|lyric|lyrics|audio|video|visualizer|remaster|explicit|clean|version|edit|hd|4k|live|feat\.|ft\.)[^)\]]*[\)\]]/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
-  artist = artist.split(/\s*(?:,|&|feat\.|ft\.)\s*/i)[0].trim();
-  return { artist, title };
+  const artist = derivedArtist
+    .split(/\s*(?:,|&|feat\.|ft\.)\s*/i)[0]
+    .replace(/\s*-\s*Topic$/i, '')
+    .trim();
+  return { artist, title, derivedArtist, derivedTitle };
 }
 
 function parseTtmlTime(str) {
@@ -184,7 +187,8 @@ function parseLrcLyrics(trackKey, lrc, durationSec, sourceLabel) {
 
 function parseLyricsPlus(trackKey, data) {
   if (!data || !Array.isArray(data.lyrics) || data.lyrics.length === 0) return null;
-  const isWord = String(data.type || '').toLowerCase() === 'word';
+  const isWordType = String(data.type || '').toLowerCase() === 'word';
+  let hasWordTimings = false;
   const lines = [];
   for (let i = 0; i < data.lyrics.length; i++) {
     const item = data.lyrics[i];
@@ -195,7 +199,7 @@ function parseLyricsPlus(trackKey, data) {
     if (!text) continue;
 
     let words;
-    if (isWord && Array.isArray(item.syllabus) && item.syllabus.length > 0) {
+    if (isWordType && Array.isArray(item.syllabus) && item.syllabus.length > 0) {
       const anyHasSpace = item.syllabus.some((s) => /\s/.test(String(s.text || '')));
       const textWordCount = text.split(/\s+/).filter(Boolean).length;
       const eachSylIsWord = !anyHasSpace && item.syllabus.length >= textWordCount && textWordCount > 1;
@@ -226,13 +230,16 @@ function parseLyricsPlus(trackKey, data) {
       }
       if (curText) merged.push({ text: curText, begin: curStart, end: curEnd });
       const stillClumped = merged.length <= 1 && textWordCount > 1;
-      words = !stillClumped && merged.length > 0
-        ? merged.map((w) => ({
-            text: w.text,
-            offsetRatio: Math.max(0, Math.min(0.96, (w.begin - begin) / dur)),
-            durationRatio: Math.max(0.03, Math.min(0.96, (w.end - w.begin) / dur)),
-          }))
-        : splitWordsTimed(text);
+      if (!stillClumped && merged.length > 0) {
+        hasWordTimings = true;
+        words = merged.map((w) => ({
+          text: w.text,
+          offsetRatio: Math.max(0, Math.min(0.96, (w.begin - begin) / dur)),
+          durationRatio: Math.max(0.03, Math.min(0.96, ((w.end - w.begin) || 0.25) / dur)),
+        }));
+      } else {
+        words = splitWordsTimed(text);
+      }
     } else {
       words = splitWordsTimed(text);
     }
@@ -243,10 +250,10 @@ function parseLyricsPlus(trackKey, data) {
     trackKey,
     found: true,
     synced: true,
-    wordSynced: isWord,
+    wordSynced: hasWordTimings,
     lines,
     plainText: null,
-    source: isWord ? 'lyricsplus:word' : 'lyricsplus:line',
+    source: hasWordTimings ? 'lyricsplus:word' : 'lyricsplus:line',
   };
 }
 
@@ -341,23 +348,75 @@ function decodeBase64Utf8(b64) {
   }
 }
 
+function findFirstJsonKey(obj, key, prefix = '') {
+  if (!obj || typeof obj !== 'object') return null;
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      const hit = findFirstJsonKey(obj[i], key, prefix);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (typeof obj[key] === 'string' && obj[key] && (!prefix || obj[key].startsWith(prefix))) {
+    return obj[key];
+  }
+  for (const v of Object.values(obj)) {
+    const hit = findFirstJsonKey(v, key, prefix);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function findFirstJsonArray(obj, key) {
+  if (!obj || typeof obj !== 'object') return null;
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      const hit = findFirstJsonArray(obj[i], key);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (Array.isArray(obj[key])) return obj[key];
+  for (const v of Object.values(obj)) {
+    const hit = findFirstJsonArray(v, key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function selectStageResult(results, plainCandidates) {
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r?.synced && r?.wordSynced) return r;
+  }
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r?.synced) return r;
+  }
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r?.found) plainCandidates.push(r);
+  }
+  return null;
+}
+
 export async function fetchLyricsInBrowser(trackKey, rawTitle, rawArtist, album, durationSec, prefs = {}) {
-  const { artist, title } = cleanTrackMeta(rawArtist, rawTitle);
+  const { artist, title, derivedArtist, derivedTitle } = cleanTrackMeta(rawArtist, rawTitle);
   const empty = { trackKey, found: false, synced: false, wordSynced: false, lines: [], plainText: null, source: 'none' };
   if (!title) return empty;
 
+  const preferred = String(prefs.preferred || 'auto').trim() || 'auto';
   const isEnabled = {
-    limusic: prefs.enableLimusic !== false,
-    boidu: prefs.enableBoidu !== false,
-    unison: prefs.enableUnison !== false,
-    lyricsplus: prefs.enableLyricsplus !== false,
-    lrclib: prefs.enableLrclib !== false,
-    ytmusic: prefs.enableYtmusic !== false,
-    netease: prefs.enableNetease !== false,
-    qqmusic: prefs.enableQqmusic !== false,
-    kugou: prefs.enableKugou !== false,
+    limusic: preferred === 'limusic' || prefs.enableLimusic !== false,
+    boidu: preferred === 'boidu' || prefs.enableBoidu !== false,
+    unison: preferred === 'unison' || prefs.enableUnison !== false,
+    lyricsplus: preferred === 'lyricsplus' || prefs.enableLyricsplus !== false,
+    lrclib: preferred === 'lrclib' || prefs.enableLrclib !== false,
+    ytmusic: preferred === 'ytmusic' || prefs.enableYtmusic !== false,
+    netease: preferred === 'netease' || prefs.enableNetease !== false,
+    qqmusic: preferred === 'qqmusic' || prefs.enableQqmusic !== false,
+    kugou: preferred === 'kugou' || prefs.enableKugou !== false,
   };
-  const preferred = prefs.preferred || 'auto';
 
   const fetchJson = async (url, opts = {}) => {
     const ctrl = new AbortController();
@@ -377,32 +436,66 @@ export async function fetchLyricsInBrowser(trackKey, rawTitle, rawArtist, album,
     }
   };
 
+  const queryTtmlEndpoint = async (endpoint, providerTag) => {
+    if (!artist) return null;
+    const attempts = [];
+    const buildQuery = (s, a, al, d) => {
+      const q = new URLSearchParams({ s, a });
+      if (al) q.set('al', al);
+      if (d >= 10) q.set('d', String(Math.round(d)));
+      return q.toString();
+    };
+    const cleanAlb = String(album || '').trim();
+    attempts.push(buildQuery(title, artist, cleanAlb, durationSec));
+    if (cleanAlb && durationSec >= 10) {
+      attempts.push(buildQuery(title, artist, '', durationSec));
+    }
+    if (cleanAlb || durationSec >= 10) {
+      attempts.push(buildQuery(title, artist, '', 0));
+    }
+    if ((derivedTitle !== title || derivedArtist !== artist) && derivedTitle && derivedArtist) {
+      attempts.push(buildQuery(derivedTitle, derivedArtist, '', 0));
+    }
+
+    for (let i = 0; i < attempts.length; i++) {
+      const json = await fetchJson(`${endpoint}?${attempts[i]}`);
+      if (!json?.ttml) continue;
+      const parsed = parseTtmlLyrics(trackKey, json.ttml, durationSec);
+      if (parsed) {
+        if (providerTag !== 'boidu') {
+          parsed.source = parsed.source.replace('boidu:', `${providerTag}:`);
+        }
+        return parsed;
+      }
+    }
+    return null;
+  };
+
   const fetchProvider = async (id) => {
     if (!isEnabled[id]) return null;
     if (id === 'limusic') {
-      if (!artist) return null;
-      const q = new URLSearchParams({ s: title, a: artist });
-      if (album) q.set('al', album);
-      if (durationSec >= 1) q.set('d', String(Math.round(durationSec)));
-      const json = await fetchJson(`https://lyrics-api.boidu.dev/getLyrics?${q.toString()}`);
-      if (!json?.ttml) return null;
-      const parsed = parseTtmlLyrics(trackKey, json.ttml, durationSec);
-      if (parsed) parsed.source = parsed.source.replace('boidu:', 'limusic:');
-      return parsed;
+      return queryTtmlEndpoint('https://lyrics-api.boidu.dev/getLyrics', 'limusic');
     }
     if (id === 'boidu') {
+      return queryTtmlEndpoint('https://api.betterlyrics.org/getLyrics', 'boidu');
+    }
+    if (id === 'lyricsplus') {
       if (!artist) return null;
-      const q = new URLSearchParams({ s: title, a: artist });
-      if (album) q.set('al', album);
-      if (durationSec >= 1) q.set('d', String(Math.round(durationSec)));
-      const json = await fetchJson(`https://api.betterlyrics.org/getLyrics?${q.toString()}`);
-      return json?.ttml ? parseTtmlLyrics(trackKey, json.ttml, durationSec) : null;
+      const q = new URLSearchParams({ title, artist, source: 'apple,lyricsplus,musixmatch,spotify,deezer' });
+      if (album) q.set('album', album);
+      if (durationSec >= 10) q.set('duration', String(Math.round(durationSec)));
+      for (const base of ['https://lyricsplus.prjktla.my.id/v2/lyrics/get', 'https://lyricsplus.prjktla.workers.dev/v2/lyrics/get']) {
+        const json = await fetchJson(`${base}?${q.toString()}`);
+        const parsed = json ? parseLyricsPlus(trackKey, json) : null;
+        if (parsed) return parsed;
+      }
+      return null;
     }
     if (id === 'unison') {
       if (!artist) return null;
       const q = new URLSearchParams({ song: title, artist });
       if (album) q.set('album', album);
-      if (durationSec >= 1) q.set('duration', String(Math.round(durationSec)));
+      if (durationSec >= 10) q.set('duration', String(Math.round(durationSec)));
       for (const base of ['https://unison.boidu.dev/lyrics', 'https://unison.betterlyrics.org/lyrics']) {
         const json = await fetchJson(`${base}?${q.toString()}`);
         const data = json?.data || json;
@@ -421,23 +514,11 @@ export async function fetchLyricsInBrowser(trackKey, rawTitle, rawArtist, album,
       }
       return null;
     }
-    if (id === 'lyricsplus') {
-      if (!artist) return null;
-      const q = new URLSearchParams({ title, artist, source: 'apple,lyricsplus,musixmatch,spotify,deezer' });
-      if (album) q.set('album', album);
-      if (durationSec >= 1) q.set('duration', String(Math.round(durationSec)));
-      for (const base of ['https://lyricsplus.prjktla.my.id/v2/lyrics/get', 'https://lyricsplus.prjktla.workers.dev/v2/lyrics/get']) {
-        const json = await fetchJson(`${base}?${q.toString()}`);
-        const parsed = json ? parseLyricsPlus(trackKey, json) : null;
-        if (parsed) return parsed;
-      }
-      return null;
-    }
     if (id === 'lrclib') {
       const q = new URLSearchParams({ track_name: title });
       if (artist) q.set('artist_name', artist);
       if (album) q.set('album_name', album);
-      if (durationSec >= 1) q.set('duration', String(Math.round(durationSec)));
+      if (durationSec >= 10) q.set('duration', String(Math.round(durationSec)));
       const direct = await fetchJson(`https://lrclib.net/api/get?${q.toString()}`);
       if (direct?.syncedLyrics) return parseLrcLyrics(trackKey, direct.syncedLyrics, durationSec, 'lrclib:synced');
       if (direct?.plainLyrics) {
@@ -451,6 +532,47 @@ export async function fetchLyricsInBrowser(trackKey, rawTitle, rawArtist, album,
       }
       if (Array.isArray(list) && list[0]?.plainLyrics) {
         return { trackKey, found: true, synced: false, wordSynced: false, lines: [], plainText: list[0].plainLyrics, source: 'lrclib:plain' };
+      }
+      return null;
+    }
+    if (id === 'ytmusic') {
+      const query = artist ? `${artist} ${title}` : title;
+      const webCtx = { client: { clientName: 'WEB_REMIX', clientVersion: '1.20241101.01.00', hl: 'en', gl: 'US' } };
+      const searchJson = await fetchJson('https://music.youtube.com/youtubei/v1/search?prettyPrint=false', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context: webCtx, query, params: 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D' }),
+      });
+      const videoId = findFirstJsonKey(searchJson, 'videoId');
+      if (!videoId) return null;
+      const nextJson = await fetchJson('https://music.youtube.com/youtubei/v1/next?prettyPrint=false', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context: webCtx, videoId }),
+      });
+      const browseId = findFirstJsonKey(nextJson, 'browseId', 'MPLYt_');
+      if (!browseId) return null;
+      const androidCtx = { client: { clientName: 'ANDROID_MUSIC', clientVersion: '7.27.52', hl: 'en', gl: 'US' } };
+      const brJson = await fetchJson('https://music.youtube.com/youtubei/v1/browse?prettyPrint=false', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context: androidCtx, browseId }),
+      });
+      const timed = findFirstJsonArray(brJson, 'timedLyricsData');
+      if (Array.isArray(timed) && timed.length > 0) {
+        const lines = [];
+        for (const item of timed) {
+          const txt = String(item?.lyricLine || '').trim();
+          const startMs = parseFloat(item?.cueRange?.startTimeMilliseconds);
+          const endMs = parseFloat(item?.cueRange?.endTimeMilliseconds);
+          if (!txt || !Number.isFinite(startMs)) continue;
+          const timeSec = Math.max(0, startMs / 1000);
+          const endSec = Math.max(timeSec + 0.4, Number.isFinite(endMs) ? endMs / 1000 : timeSec + 4.0);
+          lines.push({ timeSec, endSec, text: txt, words: splitWordsTimed(txt) });
+        }
+        if (lines.length > 0) {
+          return { trackKey, found: true, synced: true, wordSynced: false, lines, plainText: null, source: 'ytmusic:synced' };
+        }
       }
       return null;
     }
@@ -485,7 +607,7 @@ export async function fetchLyricsInBrowser(trackKey, rawTitle, rawArtist, album,
     if (id === 'kugou') {
       const kw = artist ? `${artist} - ${title}` : title;
       const sq = new URLSearchParams({ ver: '1', man: 'yes', client: 'pc', keyword: kw });
-      if (durationSec >= 1) sq.set('duration', String(Math.round(durationSec * 1000)));
+      if (durationSec >= 10) sq.set('duration', String(Math.round(durationSec * 1000)));
       const search = await fetchJson(`https://lyrics.kugou.com/search?${sq.toString()}`);
       const cand = search?.candidates?.[0];
       if (!cand?.id || !cand?.accesskey) return null;
@@ -499,29 +621,37 @@ export async function fetchLyricsInBrowser(trackKey, rawTitle, rawArtist, album,
   };
 
   const plainCandidates = [];
-  // 1. Fetch Preferred Source FIRST before touching others
+
+  // 0. Explicit Preferred Source: query ONLY it first before any fallback tier
   if (preferred !== 'auto' && isEnabled[preferred]) {
     const prefRes = await fetchProvider(preferred);
     if (prefRes?.synced) return prefRes;
     if (prefRes?.found) plainCandidates.push(prefRes);
   }
 
-  // 2. Fallback Stage A
-  const tierA = ['limusic', 'boidu', 'unison', 'lyricsplus', 'lrclib'].filter((id) => id !== preferred && isEnabled[id]);
-  if (tierA.length > 0) {
-    const resA = await Promise.all(tierA.map((id) => fetchProvider(id)));
-    for (const r of resA) if (r?.synced && r?.wordSynced) return r;
-    for (const r of resA) if (r?.synced) return r;
-    for (const r of resA) if (r?.found) plainCandidates.push(r);
+  // Tier 1 (Top of Hierarchy): Limusic & Boidu ONLY
+  const tier1Ids = ['limusic', 'boidu'].filter((id) => id !== preferred && isEnabled[id]);
+  if (tier1Ids.length > 0) {
+    const res1 = await Promise.all(tier1Ids.map((id) => fetchProvider(id)));
+    const best1 = selectStageResult(res1, plainCandidates);
+    if (best1) return best1;
   }
 
-  // 3. Fallback Stage B (Asian providers / streaming fallbacks)
-  const tierB = ['netease', 'qqmusic', 'kugou'].filter((id) => id !== preferred && isEnabled[id]);
-  if (tierB.length > 0) {
-    const resB = await Promise.all(tierB.map((id) => fetchProvider(id)));
-    for (const r of resB) if (r?.synced && r?.wordSynced) return r;
-    for (const r of resB) if (r?.synced) return r;
-    for (const r of resB) if (r?.found) plainCandidates.push(r);
+  // Tier 2: LyricsPlus ONLY
+  if (preferred !== 'lyricsplus' && isEnabled.lyricsplus) {
+    const res2 = await fetchProvider('lyricsplus');
+    const best2 = selectStageResult([res2], plainCandidates);
+    if (best2) return best2;
+  }
+
+  // Tier 3: Remaining providers (Unison, LRCLIB, Netease, YT Music, QQ Music, Kugou)
+  const tier3Ids = ['unison', 'lrclib', 'netease', 'ytmusic', 'qqmusic', 'kugou'].filter(
+    (id) => id !== preferred && isEnabled[id]
+  );
+  if (tier3Ids.length > 0) {
+    const res3 = await Promise.all(tier3Ids.map((id) => fetchProvider(id)));
+    const best3 = selectStageResult(res3, plainCandidates);
+    if (best3) return best3;
   }
 
   return plainCandidates[0] || empty;

@@ -227,27 +227,32 @@
         <div class="select-row">
           <label for="opt-lyric-preferred" class="select-label">Preferred Source</label>
           <select id="opt-lyric-preferred" class="select-input">
-            <option value="auto">Auto (Best Synced)</option>
-            <option value="limusic">Limusic (via Boidu)</option>
-            <option value="boidu">Boidu (Better Lyrics)</option>
-            <option value="unison">Unison</option>
-            <option value="lyricsplus">LyricsPlus</option>
-            <option value="lrclib">LRCLIB</option>
-            <option value="ytmusic">YouTube Music</option>
-            <option value="netease">Netease Cloud Music</option>
-            <option value="qqmusic">QQ Music</option>
-            <option value="kugou">Kugou</option>
+            <option value="auto">Auto (Limusic / Boidu → LyricsPlus → Others)</option>
+            <option value="limusic">1. Limusic (via Boidu)</option>
+            <option value="boidu">1. Boidu (Better Lyrics)</option>
+            <option value="lyricsplus">2. LyricsPlus</option>
+            <option value="unison">3. Unison</option>
+            <option value="lrclib">3. LRCLIB</option>
+            <option value="netease">3. Netease Cloud Music</option>
+            <option value="ytmusic">3. YouTube Music</option>
+            <option value="qqmusic">3. QQ Music</option>
+            <option value="kugou">3. Kugou</option>
           </select>
         </div>
 
         <label class="toggle-row" for="opt-prov-limusic">
           <input id="opt-prov-limusic" type="checkbox" checked />
-          <span>Limusic (via Boidu)</span>
+          <span>Limusic (Top Priority)</span>
         </label>
 
         <label class="toggle-row" for="opt-prov-boidu">
           <input id="opt-prov-boidu" type="checkbox" checked />
-          <span>Boidu (Better Lyrics)</span>
+          <span>Boidu · Better Lyrics (Top Priority)</span>
+        </label>
+
+        <label class="toggle-row" for="opt-prov-lyricsplus">
+          <input id="opt-prov-lyricsplus" type="checkbox" checked />
+          <span>LyricsPlus (2nd Priority)</span>
         </label>
 
         <label class="toggle-row" for="opt-prov-unison">
@@ -255,24 +260,19 @@
           <span>Unison</span>
         </label>
 
-        <label class="toggle-row" for="opt-prov-lyricsplus">
-          <input id="opt-prov-lyricsplus" type="checkbox" checked />
-          <span>LyricsPlus</span>
-        </label>
-
         <label class="toggle-row" for="opt-prov-lrclib">
           <input id="opt-prov-lrclib" type="checkbox" checked />
           <span>LRCLIB</span>
         </label>
 
-        <label class="toggle-row" for="opt-prov-ytmusic">
-          <input id="opt-prov-ytmusic" type="checkbox" checked />
-          <span>YouTube Music</span>
-        </label>
-
         <label class="toggle-row" for="opt-prov-netease">
           <input id="opt-prov-netease" type="checkbox" checked />
           <span>Netease Cloud Music</span>
+        </label>
+
+        <label class="toggle-row" for="opt-prov-ytmusic">
+          <input id="opt-prov-ytmusic" type="checkbox" checked />
+          <span>YouTube Music</span>
         </label>
 
         <label class="toggle-row" for="opt-prov-qqmusic">
@@ -356,6 +356,7 @@
     </div>
     <div id="insp-meta" class="insp-meta"></div>
     <p id="insp-note" class="insp-note"></p>
+    <div class="insp-hint"><kbd>Ctrl</kbd>+Click · Open Wikipedia ↗</div>
   </div>
 
   <div id="bottom-line-wrap" class="bottom-line-wrap hidden" aria-live="polite">
@@ -406,6 +407,7 @@
     <div class="hints">
       <span><kbd>S</kbd> Settings</span>
       <span><kbd>E</kbd> Explore</span>
+      <span><kbd>Ctrl+Click</kbd> Star Wiki</span>
       <span><kbd>M</kbd> Media</span>
       <span><kbd>F</kbd> Fact</span>
       <span><kbd>P</kbd>/<kbd>N</kbd> Constellation</span>

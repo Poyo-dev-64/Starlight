@@ -2344,6 +2344,146 @@ td[2] = f.vz * sk;
 }
 return LEO_RESULTS;
 }
+const IAU_ABBR_GENITIVES = {
+And: 'Andromedae', Ant: 'Antliae', Aps: 'Apodis', Aqr: 'Aquarii', Aql: 'Aquilae',
+Ara: 'Arae', Ari: 'Arietis', Aur: 'Aurigae', Boo: 'Bootis', Cae: 'Caeli',
+Cam: 'Camelopardalis', Cnc: 'Cancri', CVn: 'Canum_Venaticorum', CMa: 'Canis_Majoris',
+CMi: 'Canis_Minoris', Cap: 'Capricorni', Car: 'Carinae', Cas: 'Cassiopeiae',
+Cen: 'Centauri', Cep: 'Cephei', Cet: 'Ceti', Cha: 'Chamaeleontis', Cir: 'Circini',
+Col: 'Columbae', Com: 'Comae_Berenices', CrA: 'Coronae_Australis', CrB: 'Coronae_Borealis',
+Crv: 'Corvi', Crt: 'Crateris', Cru: 'Crucis', Cyg: 'Cygni', Del: 'Delphini',
+Dor: 'Doradus', Dra: 'Draconis', Equ: 'Equulei', Eri: 'Eridani', For: 'Fornacis',
+Gem: 'Geminorum', Gru: 'Gruis', Her: 'Herculis', Hor: 'Horologii', Hya: 'Hydrae',
+Hyi: 'Hydri', Ind: 'Indi', Lac: 'Lacertae', Leo: 'Leonis', LMi: 'Leonis_Minoris',
+Lep: 'Leporis', Lib: 'Librae', Lup: 'Lupi', Lyn: 'Lyncis', Lyr: 'Lyrae',
+Men: 'Mensae', Mic: 'Microscopii', Mon: 'Monocerotis', Mus: 'Muscae', Nor: 'Normae',
+Oct: 'Octantis', Oph: 'Ophiuchi', Ori: 'Orionis', Pav: 'Pavonis', Peg: 'Pegasi',
+Per: 'Persei', Phe: 'Phoenicis', Pic: 'Pictoris', Psc: 'Piscium', PsA: 'Piscis_Austrini',
+Pup: 'Puppis', Pyx: 'Pyxidis', Ret: 'Reticuli', Sge: 'Sagittae', Sgr: 'Sagittarii',
+Sco: 'Scorpii', Scl: 'Sculptoris', Sct: 'Scuti', Ser: 'Serpentis', Sex: 'Sextantis',
+Tau: 'Tauri', Tel: 'Telescopii', Tri: 'Trianguli', TrA: 'Trianguli_Australis',
+Tuc: 'Tucanae', UMa: 'Ursae_Majoris', UMi: 'Ursae_Minoris', Vel: 'Velorum',
+Vir: 'Virginis', Vol: 'Volantis', Vul: 'Vulpeculae',
+};
+const STAR_WIKI_OVERRIDES = {
+'CYGNUS:Gienah': 'Epsilon_Cygni',
+'CORVUS:Gienah': 'Gamma_Corvi',
+'PHOENIX:Alpha/Zeta': 'Ankaa',
+'Asellus Bor': 'Gamma_Cancri',
+'Asellus Aus': 'Delta_Cancri',
+'Garnet Star': 'Mu_Cephei',
+'Rigil Kent': 'Alpha_Centauri',
+'The Persian': 'Alpha_Indi',
+Mimosa: 'Mimosa_(star)',
+Peacock: 'Peacock_(star)',
+Diadem: 'Alpha_Comae_Berenices',
+Chara: 'Beta_Canum_Venaticorum',
+Ran: 'Epsilon_Eridani',
+Anser: 'Alpha_Vulpeculae',
+Praecipua: '46_Leonis_Minoris',
+Ashlesha: 'Epsilon_Hydrae',
+Algedi: 'Alpha_Capricorni',
+Sarin: 'Delta_Herculis',
+Atik: 'Omicron_Persei',
+Matar: 'Eta_Pegasi',
+Ancha: 'Theta_Aquarii',
+Skat: 'Delta_Aquarii',
+Albali: 'Epsilon_Aquarii',
+Mahasim: 'Theta_Aurigae',
+Hassaleh: 'Iota_Aurigae',
+Almaaz: 'Epsilon_Aurigae',
+Kraz: 'Beta_Corvi',
+Minkar: 'Epsilon_Corvi',
+Alchiba: 'Alpha_Corvi',
+Alkes: 'Alpha_Crateris',
+Dalim: 'Alpha_Fornacis',
+Tiaki: 'Beta_Gruis',
+'Al Dhanab': 'Gamma_Gruis',
+Tureis: 'Rho_Puppis',
+Regor: 'Gamma_Velorum',
+Suhail: 'Lambda_Velorum',
+Alya: 'Theta_Serpentis',
+Mothallah: 'Alpha_Trianguli',
+Atria: 'Alpha_Trianguli_Australis',
+Ginan: 'Epsilon_Crucis',
+Imai: 'Delta_Crucis',
+Syrma: 'Iota_Virginis',
+Heze: 'Zeta_Virginis',
+Auva: 'Delta_Virginis',
+Tarf: 'Beta_Cancri',
+Brachium: 'Sigma_Librae',
+Yildun: 'Delta_Ursae_Minoris',
+'Deneb Okab': 'Zeta_Aquilae',
+'Deneb Dulfim': 'Epsilon_Delphini',
+Sadaltager: 'Zeta_Aquarii',
+'Fum al Samakah': 'Beta_Piscium',
+};
+const DSO_WIKI_OVERRIDES = {
+M13: 'Messier_13',
+M81: 'Messier_81',
+};
+const OBJECT_WIKI_OVERRIDES = {
+moon: 'Moon',
+mercury: 'Mercury_(planet)',
+venus: 'Venus',
+mars: 'Mars',
+jupiter: 'Jupiter',
+saturn: 'Saturn',
+uranus: 'Uranus',
+neptune: 'Neptune',
+'VGR-1': 'Voyager_1',
+'VGR-2': 'Voyager_2',
+NH: 'New_Horizons',
+'PIO-10': 'Pioneer_10',
+'PIO-11': 'Pioneer_11',
+JWST: 'James_Webb_Space_Telescope',
+ISS: 'International_Space_Station',
+HST: 'Hubble_Space_Telescope',
+};
+function toWikiTitleCase(raw) {
+return String(raw || '')
+.trim()
+.toLowerCase()
+.split(/\s+/)
+.map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ''))
+.join('_');
+}
+function resolveConstellationWikiUrl(constellationName) {
+const clean = String(constellationName || '').trim();
+if (!clean) return 'https://en.wikipedia.org/wiki/IAU_designated_constellations';
+const slug = toWikiTitleCase(clean);
+const fullSlug = clean.includes(' ') ? slug : `${slug}_(constellation)`;
+return `https://en.wikipedia.org/wiki/${encodeURIComponent(fullSlug).replace(/%28/g, '(').replace(/%29/g, ')')}`;
+}
+function resolveStarWikiUrl(starName, constellationName) {
+const sName = String(starName || '').trim();
+if (!sName) {
+return resolveConstellationWikiUrl(constellationName);
+}
+const cKey = `${String(constellationName || '').trim().toUpperCase()}:${sName}`;
+const override = STAR_WIKI_OVERRIDES[cKey] || STAR_WIKI_OVERRIDES[sName];
+if (override) {
+return `https://en.wikipedia.org/wiki/${override}`;
+}
+const bayerMatch = /^([A-Za-z0-9]+)\s+([A-Z][a-zA-Z]{2})$/.exec(sName);
+if (bayerMatch && IAU_ABBR_GENITIVES[bayerMatch[2]]) {
+const slug = `${bayerMatch[1]}_${IAU_ABBR_GENITIVES[bayerMatch[2]]}`;
+return `https://en.wikipedia.org/wiki/${encodeURIComponent(slug)}`;
+}
+const slug = sName.replace(/\s+/g, '_');
+return `https://en.wikipedia.org/wiki/${encodeURIComponent(slug).replace(/%28/g, '(').replace(/%29/g, ')')}`;
+}
+function resolveDeepSkyWikiUrl(dso) {
+if (!dso) return 'https://en.wikipedia.org/wiki/Messier_object';
+const override = DSO_WIKI_OVERRIDES[dso.id];
+const slug = override || String(dso.name || dso.id).trim().replace(/\s+/g, '_');
+return `https://en.wikipedia.org/wiki/${encodeURIComponent(slug)}`;
+}
+function resolveObjectWikiUrl(idOrName) {
+const key = String(idOrName || '').trim();
+const slug = OBJECT_WIKI_OVERRIDES[key] || key.replace(/\s+/g, '_');
+return `https://en.wikipedia.org/wiki/${encodeURIComponent(slug).replace(/%28/g, '(').replace(/%29/g, ')')}`;
+}
 // === visualizer.js ===
 function clamp(v, min, max) {
 return v < min ? min : v > max ? max : v;
@@ -2879,6 +3019,7 @@ this.skyDeepSky = DEEP_SKY_OBJECTS.map((obj) => ({
 dir: raDecToVec3(obj.ra, obj.dec),
 metaStr: `Mag ${obj.mag.toFixed(1)} · ${obj.distance} · ${obj.constellation}`,
 titleName: `${obj.id} · ${obj.name}`,
+wikiUrl: resolveDeepSkyWikiUrl(obj),
 }));
 this.starSprites = this._buildStarSprites();
 this.wordBitmapCache = new Map();
@@ -2962,6 +3103,7 @@ for (let e = 0; e < eCount; e++) {
 edgesFlat[e * 2] = c.edges[e][0];
 edgesFlat[e * 2 + 1] = c.edges[e][1];
 }
+const cWikiUrl = resolveConstellationWikiUrl(c.name);
 const projPool = c.stars.map((s, idx) => ({
 ...s,
 renderColor: s.color,
@@ -2972,9 +3114,11 @@ colorIdx: Math.max(0, DEFAULT_PALETTE.indexOf(s.color)),
 metaAmbient: `Mag ${s.mag.toFixed(1)} · ${c.title}`,
 fallbackHeroName: `${c.name} Star #${idx + 1}`,
 fallbackAmbName: s.name || `${c.name} Star`,
+wikiUrl: resolveStarWikiUrl(s.name, c.name),
 }));
 return {
 constellation: c,
+wikiUrl: cWikiUrl,
 centerDir: C,
 uDir: U,
 vDir: V,
@@ -3705,17 +3849,18 @@ sArr[sOff + 1] = s.sy - r;
 sArr[sOff + 2] = r * 2;
 starCounts[bIdx] = sOff + 3;
 }
-if (this.collectHitTargets && s.z > 0.08 && (s.name || s.mag < 2.2) && s.sx > -20 && s.sx < w + 20 && s.sy > -20 && s.sy < h + 20) {
+if (this.collectHitTargets && s.z > 0.08 && s.sx > -20 && s.sx < w + 20 && s.sy > -20 && s.sy < h + 20) {
 this.hitTargets.push({
 x: s.sx,
 y: s.sy,
-hitRadius: 12,
-priority: s.name ? 1.5 : 0.8,
+hitRadius: 13,
+priority: s.name ? 1.5 : 0.85,
 kind: cObj.name,
 name: s.fallbackAmbName,
 meta: s.metaAmbient,
 note: cObj.fact,
 color: s.renderColor || this.theme.brand,
+url: s.wikiUrl,
 });
 }
 sumX += s.sx;
@@ -3922,6 +4067,7 @@ name: obj.titleName,
 meta: obj.metaStr,
 note: obj.note,
 color: obj.color,
+url: obj.wikiUrl,
 });
 }
 }
@@ -4050,6 +4196,7 @@ name: body.name,
 meta,
 note: body.note,
 color: body.color,
+url: body.wikiUrl || (body.wikiUrl = resolveObjectWikiUrl(body.id)),
 });
 }
 }
@@ -4118,6 +4265,7 @@ name: probe.name,
 meta,
 note: probe.note,
 color: probe.color,
+url: probe.wikiUrl || (probe.wikiUrl = resolveObjectWikiUrl(probe.id)),
 });
 }
 }
@@ -4173,6 +4321,7 @@ name: sat.name,
 meta: `Alt ${sat.altitude} · ${sat.speed}`,
 note: sat.note,
 color: sat.color,
+url: sat.wikiUrl || (sat.wikiUrl = resolveObjectWikiUrl(sat.id)),
 });
 }
 }
@@ -4199,6 +4348,143 @@ best = t;
 }
 this.hoveredTarget = best;
 return best;
+}
+pickCelestialAt(x, y) {
+if (x < 0 || y < 0) return null;
+if (this.hitTargets.length > 0) {
+let best = null;
+let bestScore = Infinity;
+for (let i = 0; i < this.hitTargets.length; i++) {
+const t = this.hitTargets[i];
+if (!t.url) continue;
+const r = (t.hitRadius || 15) + 4;
+const dx = t.x - x;
+const dy = t.y - y;
+const d2 = dx * dx + dy * dy;
+if (d2 <= r * r) {
+const score = Math.sqrt(d2) - (t.priority || 1) * 3.5;
+if (score < bestScore) {
+bestScore = score;
+best = t;
+}
+}
+}
+if (best) return best;
+}
+const m = this.rotMat;
+const m00 = m[0], m01 = m[1], m02 = m[2];
+const m10 = m[3], m11 = m[4], m12 = m[5];
+const m20 = m[6], m21 = m[7], m22 = m[8];
+const cx = this.width * 0.5;
+const cy = this.height * 0.48;
+const domeRadius = this.lastDomeRadius || 400;
+const activeIdx = this.transition ? this.transition.toIndex : this.heroIndex;
+let best = null;
+let bestScore = Infinity;
+const consider = (sx, sy, radius, priority, name, kind, url, color) => {
+const dx = sx - x;
+const dy = sy - y;
+const d2 = dx * dx + dy * dy;
+if (d2 <= radius * radius) {
+const score = Math.sqrt(d2) - priority * 3.5;
+if (score < bestScore) {
+bestScore = score;
+best = { x: sx, y: sy, name, kind, url, color };
+}
+}
+};
+const projectDir = (d, minZ) => {
+const vz = m20 * d[0] + m21 * d[1] + m22 * d[2];
+if (vz <= minZ) return null;
+const k = domeRadius / (1 + (vz < 1.22 ? (1 - vz) * 0.28 : -0.0616));
+return [cx + (m00 * d[0] + m01 * d[1] + m02 * d[2]) * k, cy + (m10 * d[0] + m11 * d[1] + m12 * d[2]) * k];
+};
+for (let ci = 0; ci < this.skyConstellations.length; ci++) {
+const sky = this.skyConstellations[ci];
+const cd = sky.centerDir;
+const cz = m20 * cd[0] + m21 * cd[1] + m22 * cd[2];
+if (cz <= -0.14) continue;
+const isHero = ci === activeIdx;
+const flat = sky.starDirsFlat;
+const pool = sky.projPool;
+for (let si = 0, j = 0; si < pool.length; si++, j += 3) {
+const dx = flat[j], dy = flat[j + 1], dz = flat[j + 2];
+const vz = m20 * dx + m21 * dy + m22 * dz;
+if (vz <= (isHero ? 0.01 : 0.08)) continue;
+const k = domeRadius / (1 + (vz < 1.22 ? (1 - vz) * 0.28 : -0.0616));
+const sx = cx + (m00 * dx + m01 * dy + m02 * dz) * k;
+const sy = cy + (m10 * dx + m11 * dy + m12 * dz) * k;
+const s = pool[si];
+consider(
+sx,
+sy,
+isHero ? 19 : 16,
+isHero ? (s.name ? 3.2 : 2.2) : (s.name ? 1.5 : 0.85),
+s.name || (isHero ? s.fallbackHeroName : s.fallbackAmbName),
+sky.constellation.name,
+s.wikiUrl,
+s.renderColor || this.theme.brand
+);
+}
+}
+if (this.settings.showDeepSky) {
+for (let i = 0; i < this.skyDeepSky.length; i++) {
+const obj = this.skyDeepSky[i];
+const pt = projectDir(obj.dir, 0.04);
+if (pt) consider(pt[0], pt[1], 20, 2.4, obj.titleName, obj.kind, obj.wikiUrl, obj.color);
+}
+if (this.solarSystem?.bodies) {
+for (let i = 0; i < this.solarSystem.bodies.length; i++) {
+const b = this.solarSystem.bodies[i];
+const pt = projectDir(b.dir, 0.02);
+if (pt) {
+consider(pt[0], pt[1], 20, 3.3, b.name, b.kind, b.wikiUrl || resolveObjectWikiUrl(b.id), b.color);
+}
+}
+}
+}
+if (this.settings.showSatellites) {
+if (this.spacecraft) {
+for (let i = 0; i < this.spacecraft.length; i++) {
+const p = this.spacecraft[i];
+const pt = projectDir(p.dir, 0.02);
+if (pt) {
+consider(pt[0], pt[1], 22, p.featured ? 4.4 : 3.8, p.name, p.kind, p.wikiUrl || resolveObjectWikiUrl(p.id), p.color);
+}
+}
+}
+const sats = computeOrbitingSatellites(this.lastFrameTime * 0.001);
+for (let i = 0; i < sats.length; i++) {
+const sat = sats[i];
+const pt = projectDir(sat.dir, 0.04);
+if (pt) {
+consider(pt[0], pt[1], 22, 4.1, sat.name, sat.kind, sat.wikiUrl || resolveObjectWikiUrl(sat.id), sat.color);
+}
+}
+}
+return best;
+}
+triggerStarClickFeedback(x, y, color) {
+const col = color || this.theme.brand;
+this.ripples.push({
+x,
+y,
+radius: 4,
+maxRadius: 56,
+alpha: 0.92,
+speed: 96,
+color: col,
+});
+this.ripples.push({
+x,
+y,
+radius: 2,
+maxRadius: 32,
+alpha: 0.65,
+speed: 62,
+color: '#ffffff',
+});
+this._spawnEmberBurst(x, y, col);
 }
 _drawHoverReticle(ctx, target, nowSec) {
 const r = 12 + Math.sin(nowSec * 3.5) * 1.2;
@@ -4703,6 +4989,7 @@ name: s.name || s.fallbackHeroName,
 meta: s.metaAmbient,
 note: hero.fact,
 color: sCol || this.theme.brand,
+url: s.wikiUrl,
 });
 }
 }
@@ -5014,19 +5301,22 @@ return item;
 });
 }
 function cleanTrackMeta(rawArtist, rawTitle) {
-let artist = String(rawArtist || '').trim();
-let title = String(rawTitle || '').trim();
-if (!artist && title.includes(' - ')) {
-const idx = title.indexOf(' - ');
-artist = title.slice(0, idx).trim();
-title = title.slice(idx + 3).trim();
+let derivedArtist = String(rawArtist || '').trim();
+let derivedTitle = String(rawTitle || '').trim();
+if (!derivedArtist && derivedTitle.includes(' - ')) {
+const idx = derivedTitle.indexOf(' - ');
+derivedArtist = derivedTitle.slice(0, idx).trim();
+derivedTitle = derivedTitle.slice(idx + 3).trim();
 }
-title = title
-.replace(/\s*[\(\[][^)\]]*(official|lyric|audio|video|remaster|explicit|hd|4k|feat\.|ft\.)[^)\]]*[\)\]]/gi, '')
+const title = derivedTitle
+.replace(/\s*[\(\[][^)\]]*(official|lyric|lyrics|audio|video|visualizer|remaster|explicit|clean|version|edit|hd|4k|live|feat\.|ft\.)[^)\]]*[\)\]]/gi, '')
 .replace(/\s{2,}/g, ' ')
 .trim();
-artist = artist.split(/\s*(?:,|&|feat\.|ft\.)\s*/i)[0].trim();
-return { artist, title };
+const artist = derivedArtist
+.split(/\s*(?:,|&|feat\.|ft\.)\s*/i)[0]
+.replace(/\s*-\s*Topic$/i, '')
+.trim();
+return { artist, title, derivedArtist, derivedTitle };
 }
 function parseTtmlTime(str) {
 const s = String(str || '').trim();
@@ -5169,7 +5459,8 @@ source: sourceLabel,
 }
 function parseLyricsPlus(trackKey, data) {
 if (!data || !Array.isArray(data.lyrics) || data.lyrics.length === 0) return null;
-const isWord = String(data.type || '').toLowerCase() === 'word';
+const isWordType = String(data.type || '').toLowerCase() === 'word';
+let hasWordTimings = false;
 const lines = [];
 for (let i = 0; i < data.lyrics.length; i++) {
 const item = data.lyrics[i];
@@ -5179,7 +5470,7 @@ const endSec = begin + dur;
 const text = String(item.text || '').trim();
 if (!text) continue;
 let words;
-if (isWord && Array.isArray(item.syllabus) && item.syllabus.length > 0) {
+if (isWordType && Array.isArray(item.syllabus) && item.syllabus.length > 0) {
 const anyHasSpace = item.syllabus.some((s) => /\s/.test(String(s.text || '')));
 const textWordCount = text.split(/\s+/).filter(Boolean).length;
 const eachSylIsWord = !anyHasSpace && item.syllabus.length >= textWordCount && textWordCount > 1;
@@ -5210,13 +5501,16 @@ curStart = null;
 }
 if (curText) merged.push({ text: curText, begin: curStart, end: curEnd });
 const stillClumped = merged.length <= 1 && textWordCount > 1;
-words = !stillClumped && merged.length > 0
-? merged.map((w) => ({
+if (!stillClumped && merged.length > 0) {
+hasWordTimings = true;
+words = merged.map((w) => ({
 text: w.text,
 offsetRatio: Math.max(0, Math.min(0.96, (w.begin - begin) / dur)),
-durationRatio: Math.max(0.03, Math.min(0.96, (w.end - w.begin) / dur)),
-}))
-: splitWordsTimed(text);
+durationRatio: Math.max(0.03, Math.min(0.96, ((w.end - w.begin) || 0.25) / dur)),
+}));
+} else {
+words = splitWordsTimed(text);
+}
 } else {
 words = splitWordsTimed(text);
 }
@@ -5227,10 +5521,10 @@ return {
 trackKey,
 found: true,
 synced: true,
-wordSynced: isWord,
+wordSynced: hasWordTimings,
 lines,
 plainText: null,
-source: isWord ? 'lyricsplus:word' : 'lyricsplus:line',
+source: hasWordTimings ? 'lyricsplus:word' : 'lyricsplus:line',
 };
 }
 function parseNeteaseYrc(trackKey, yrcText, durationSec) {
@@ -5319,22 +5613,71 @@ return new TextDecoder('utf-8').decode(bytes);
 return '';
 }
 }
+function findFirstJsonKey(obj, key, prefix = '') {
+if (!obj || typeof obj !== 'object') return null;
+if (Array.isArray(obj)) {
+for (let i = 0; i < obj.length; i++) {
+const hit = findFirstJsonKey(obj[i], key, prefix);
+if (hit) return hit;
+}
+return null;
+}
+if (typeof obj[key] === 'string' && obj[key] && (!prefix || obj[key].startsWith(prefix))) {
+return obj[key];
+}
+for (const v of Object.values(obj)) {
+const hit = findFirstJsonKey(v, key, prefix);
+if (hit) return hit;
+}
+return null;
+}
+function findFirstJsonArray(obj, key) {
+if (!obj || typeof obj !== 'object') return null;
+if (Array.isArray(obj)) {
+for (let i = 0; i < obj.length; i++) {
+const hit = findFirstJsonArray(obj[i], key);
+if (hit) return hit;
+}
+return null;
+}
+if (Array.isArray(obj[key])) return obj[key];
+for (const v of Object.values(obj)) {
+const hit = findFirstJsonArray(v, key);
+if (hit) return hit;
+}
+return null;
+}
+function selectStageResult(results, plainCandidates) {
+for (let i = 0; i < results.length; i++) {
+const r = results[i];
+if (r?.synced && r?.wordSynced) return r;
+}
+for (let i = 0; i < results.length; i++) {
+const r = results[i];
+if (r?.synced) return r;
+}
+for (let i = 0; i < results.length; i++) {
+const r = results[i];
+if (r?.found) plainCandidates.push(r);
+}
+return null;
+}
 async function fetchLyricsInBrowser(trackKey, rawTitle, rawArtist, album, durationSec, prefs = {}) {
-const { artist, title } = cleanTrackMeta(rawArtist, rawTitle);
+const { artist, title, derivedArtist, derivedTitle } = cleanTrackMeta(rawArtist, rawTitle);
 const empty = { trackKey, found: false, synced: false, wordSynced: false, lines: [], plainText: null, source: 'none' };
 if (!title) return empty;
+const preferred = String(prefs.preferred || 'auto').trim() || 'auto';
 const isEnabled = {
-limusic: prefs.enableLimusic !== false,
-boidu: prefs.enableBoidu !== false,
-unison: prefs.enableUnison !== false,
-lyricsplus: prefs.enableLyricsplus !== false,
-lrclib: prefs.enableLrclib !== false,
-ytmusic: prefs.enableYtmusic !== false,
-netease: prefs.enableNetease !== false,
-qqmusic: prefs.enableQqmusic !== false,
-kugou: prefs.enableKugou !== false,
+limusic: preferred === 'limusic' || prefs.enableLimusic !== false,
+boidu: preferred === 'boidu' || prefs.enableBoidu !== false,
+unison: preferred === 'unison' || prefs.enableUnison !== false,
+lyricsplus: preferred === 'lyricsplus' || prefs.enableLyricsplus !== false,
+lrclib: preferred === 'lrclib' || prefs.enableLrclib !== false,
+ytmusic: preferred === 'ytmusic' || prefs.enableYtmusic !== false,
+netease: preferred === 'netease' || prefs.enableNetease !== false,
+qqmusic: preferred === 'qqmusic' || prefs.enableQqmusic !== false,
+kugou: preferred === 'kugou' || prefs.enableKugou !== false,
 };
-const preferred = prefs.preferred || 'auto';
 const fetchJson = async (url, opts = {}) => {
 const ctrl = new AbortController();
 const timer = setTimeout(() => ctrl.abort(), 5000);
@@ -5352,32 +5695,64 @@ return null;
 clearTimeout(timer);
 }
 };
+const queryTtmlEndpoint = async (endpoint, providerTag) => {
+if (!artist) return null;
+const attempts = [];
+const buildQuery = (s, a, al, d) => {
+const q = new URLSearchParams({ s, a });
+if (al) q.set('al', al);
+if (d >= 10) q.set('d', String(Math.round(d)));
+return q.toString();
+};
+const cleanAlb = String(album || '').trim();
+attempts.push(buildQuery(title, artist, cleanAlb, durationSec));
+if (cleanAlb && durationSec >= 10) {
+attempts.push(buildQuery(title, artist, '', durationSec));
+}
+if (cleanAlb || durationSec >= 10) {
+attempts.push(buildQuery(title, artist, '', 0));
+}
+if ((derivedTitle !== title || derivedArtist !== artist) && derivedTitle && derivedArtist) {
+attempts.push(buildQuery(derivedTitle, derivedArtist, '', 0));
+}
+for (let i = 0; i < attempts.length; i++) {
+const json = await fetchJson(`${endpoint}?${attempts[i]}`);
+if (!json?.ttml) continue;
+const parsed = parseTtmlLyrics(trackKey, json.ttml, durationSec);
+if (parsed) {
+if (providerTag !== 'boidu') {
+parsed.source = parsed.source.replace('boidu:', `${providerTag}:`);
+}
+return parsed;
+}
+}
+return null;
+};
 const fetchProvider = async (id) => {
 if (!isEnabled[id]) return null;
 if (id === 'limusic') {
-if (!artist) return null;
-const q = new URLSearchParams({ s: title, a: artist });
-if (album) q.set('al', album);
-if (durationSec >= 1) q.set('d', String(Math.round(durationSec)));
-const json = await fetchJson(`https://lyrics-api.boidu.dev/getLyrics?${q.toString()}`);
-if (!json?.ttml) return null;
-const parsed = parseTtmlLyrics(trackKey, json.ttml, durationSec);
-if (parsed) parsed.source = parsed.source.replace('boidu:', 'limusic:');
-return parsed;
+return queryTtmlEndpoint('https://lyrics-api.boidu.dev/getLyrics', 'limusic');
 }
 if (id === 'boidu') {
+return queryTtmlEndpoint('https://api.betterlyrics.org/getLyrics', 'boidu');
+}
+if (id === 'lyricsplus') {
 if (!artist) return null;
-const q = new URLSearchParams({ s: title, a: artist });
-if (album) q.set('al', album);
-if (durationSec >= 1) q.set('d', String(Math.round(durationSec)));
-const json = await fetchJson(`https://api.betterlyrics.org/getLyrics?${q.toString()}`);
-return json?.ttml ? parseTtmlLyrics(trackKey, json.ttml, durationSec) : null;
+const q = new URLSearchParams({ title, artist, source: 'apple,lyricsplus,musixmatch,spotify,deezer' });
+if (album) q.set('album', album);
+if (durationSec >= 10) q.set('duration', String(Math.round(durationSec)));
+for (const base of ['https://lyricsplus.prjktla.my.id/v2/lyrics/get', 'https://lyricsplus.prjktla.workers.dev/v2/lyrics/get']) {
+const json = await fetchJson(`${base}?${q.toString()}`);
+const parsed = json ? parseLyricsPlus(trackKey, json) : null;
+if (parsed) return parsed;
+}
+return null;
 }
 if (id === 'unison') {
 if (!artist) return null;
 const q = new URLSearchParams({ song: title, artist });
 if (album) q.set('album', album);
-if (durationSec >= 1) q.set('duration', String(Math.round(durationSec)));
+if (durationSec >= 10) q.set('duration', String(Math.round(durationSec)));
 for (const base of ['https://unison.boidu.dev/lyrics', 'https://unison.betterlyrics.org/lyrics']) {
 const json = await fetchJson(`${base}?${q.toString()}`);
 const data = json?.data || json;
@@ -5396,23 +5771,11 @@ return { trackKey, found: true, synced: false, wordSynced: false, lines: [], pla
 }
 return null;
 }
-if (id === 'lyricsplus') {
-if (!artist) return null;
-const q = new URLSearchParams({ title, artist, source: 'apple,lyricsplus,musixmatch,spotify,deezer' });
-if (album) q.set('album', album);
-if (durationSec >= 1) q.set('duration', String(Math.round(durationSec)));
-for (const base of ['https://lyricsplus.prjktla.my.id/v2/lyrics/get', 'https://lyricsplus.prjktla.workers.dev/v2/lyrics/get']) {
-const json = await fetchJson(`${base}?${q.toString()}`);
-const parsed = json ? parseLyricsPlus(trackKey, json) : null;
-if (parsed) return parsed;
-}
-return null;
-}
 if (id === 'lrclib') {
 const q = new URLSearchParams({ track_name: title });
 if (artist) q.set('artist_name', artist);
 if (album) q.set('album_name', album);
-if (durationSec >= 1) q.set('duration', String(Math.round(durationSec)));
+if (durationSec >= 10) q.set('duration', String(Math.round(durationSec)));
 const direct = await fetchJson(`https://lrclib.net/api/get?${q.toString()}`);
 if (direct?.syncedLyrics) return parseLrcLyrics(trackKey, direct.syncedLyrics, durationSec, 'lrclib:synced');
 if (direct?.plainLyrics) {
@@ -5426,6 +5789,47 @@ return parseLrcLyrics(trackKey, list[0].syncedLyrics, durationSec, 'lrclib:synce
 }
 if (Array.isArray(list) && list[0]?.plainLyrics) {
 return { trackKey, found: true, synced: false, wordSynced: false, lines: [], plainText: list[0].plainLyrics, source: 'lrclib:plain' };
+}
+return null;
+}
+if (id === 'ytmusic') {
+const query = artist ? `${artist} ${title}` : title;
+const webCtx = { client: { clientName: 'WEB_REMIX', clientVersion: '1.20241101.01.00', hl: 'en', gl: 'US' } };
+const searchJson = await fetchJson('https://music.youtube.com/youtubei/v1/search?prettyPrint=false', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ context: webCtx, query, params: 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D' }),
+});
+const videoId = findFirstJsonKey(searchJson, 'videoId');
+if (!videoId) return null;
+const nextJson = await fetchJson('https://music.youtube.com/youtubei/v1/next?prettyPrint=false', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ context: webCtx, videoId }),
+});
+const browseId = findFirstJsonKey(nextJson, 'browseId', 'MPLYt_');
+if (!browseId) return null;
+const androidCtx = { client: { clientName: 'ANDROID_MUSIC', clientVersion: '7.27.52', hl: 'en', gl: 'US' } };
+const brJson = await fetchJson('https://music.youtube.com/youtubei/v1/browse?prettyPrint=false', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ context: androidCtx, browseId }),
+});
+const timed = findFirstJsonArray(brJson, 'timedLyricsData');
+if (Array.isArray(timed) && timed.length > 0) {
+const lines = [];
+for (const item of timed) {
+const txt = String(item?.lyricLine || '').trim();
+const startMs = parseFloat(item?.cueRange?.startTimeMilliseconds);
+const endMs = parseFloat(item?.cueRange?.endTimeMilliseconds);
+if (!txt || !Number.isFinite(startMs)) continue;
+const timeSec = Math.max(0, startMs / 1000);
+const endSec = Math.max(timeSec + 0.4, Number.isFinite(endMs) ? endMs / 1000 : timeSec + 4.0);
+lines.push({ timeSec, endSec, text: txt, words: splitWordsTimed(txt) });
+}
+if (lines.length > 0) {
+return { trackKey, found: true, synced: true, wordSynced: false, lines, plainText: null, source: 'ytmusic:synced' };
+}
 }
 return null;
 }
@@ -5460,7 +5864,7 @@ return text ? parseLrcLyrics(trackKey, text, durationSec, 'qqmusic:synced') : nu
 if (id === 'kugou') {
 const kw = artist ? `${artist} - ${title}` : title;
 const sq = new URLSearchParams({ ver: '1', man: 'yes', client: 'pc', keyword: kw });
-if (durationSec >= 1) sq.set('duration', String(Math.round(durationSec * 1000)));
+if (durationSec >= 10) sq.set('duration', String(Math.round(durationSec * 1000)));
 const search = await fetchJson(`https://lyrics.kugou.com/search?${sq.toString()}`);
 const cand = search?.candidates?.[0];
 if (!cand?.id || !cand?.accesskey) return null;
@@ -5478,19 +5882,24 @@ const prefRes = await fetchProvider(preferred);
 if (prefRes?.synced) return prefRes;
 if (prefRes?.found) plainCandidates.push(prefRes);
 }
-const tierA = ['limusic', 'boidu', 'unison', 'lyricsplus', 'lrclib'].filter((id) => id !== preferred && isEnabled[id]);
-if (tierA.length > 0) {
-const resA = await Promise.all(tierA.map((id) => fetchProvider(id)));
-for (const r of resA) if (r?.synced && r?.wordSynced) return r;
-for (const r of resA) if (r?.synced) return r;
-for (const r of resA) if (r?.found) plainCandidates.push(r);
+const tier1Ids = ['limusic', 'boidu'].filter((id) => id !== preferred && isEnabled[id]);
+if (tier1Ids.length > 0) {
+const res1 = await Promise.all(tier1Ids.map((id) => fetchProvider(id)));
+const best1 = selectStageResult(res1, plainCandidates);
+if (best1) return best1;
 }
-const tierB = ['netease', 'qqmusic', 'kugou'].filter((id) => id !== preferred && isEnabled[id]);
-if (tierB.length > 0) {
-const resB = await Promise.all(tierB.map((id) => fetchProvider(id)));
-for (const r of resB) if (r?.synced && r?.wordSynced) return r;
-for (const r of resB) if (r?.synced) return r;
-for (const r of resB) if (r?.found) plainCandidates.push(r);
+if (preferred !== 'lyricsplus' && isEnabled.lyricsplus) {
+const res2 = await fetchProvider('lyricsplus');
+const best2 = selectStageResult([res2], plainCandidates);
+if (best2) return best2;
+}
+const tier3Ids = ['unison', 'lrclib', 'netease', 'ytmusic', 'qqmusic', 'kugou'].filter(
+(id) => id !== preferred && isEnabled[id]
+);
+if (tier3Ids.length > 0) {
+const res3 = await Promise.all(tier3Ids.map((id) => fetchProvider(id)));
+const best3 = selectStageResult(res3, plainCandidates);
+if (best3) return best3;
 }
 return plainCandidates[0] || empty;
 }
@@ -5836,6 +6245,8 @@ wasInstrumentalSolo: false,
 drag: { active: false, pointerId: null, lastX: 0, lastY: 0, lastMs: 0 },
 lastExploreNearestIdx: -1,
 pointer: { x: -1, y: -1, inside: false },
+ctrlHeld: false,
+ctrlHoverActive: false,
 lastInspectedKey: '',
 inspectorHidden: true,
 inspectorWidth: 240,
@@ -5846,6 +6257,7 @@ pausedBottomSec: 0,
 wallpaperModeActive: false,
 weEnv: false,
 wePaused: false,
+weLastLookupDurSec: 0,
 docHiddenPaused: false,
 rafScheduled: false,
 weTargetFps: 0,
@@ -6183,9 +6595,9 @@ if (!invoke) {
 if (state.media.hasSession) {
 lookupBrowserLyrics(true);
 }
-return;
+return Promise.resolve();
 }
-invoke('set_lyric_prefs', {
+return invoke('set_lyric_prefs', {
 prefs: {
 preferred: state.settings.lyricPreferred || 'auto',
 enableLimusic: Boolean(state.settings.enableLimusic),
@@ -6605,6 +7017,52 @@ state.pendingRotation = true;
 }
 }
 }
+const ALLOWED_CELESTIAL_ORIGINS = [
+'https://en.wikipedia.org',
+'https://simbad.cds.unistra.fr',
+'https://science.nasa.gov',
+];
+function isAllowedCelestialUrl(candidate) {
+try {
+if ('Origin' in globalThis) {
+const candOrigin = Origin.from(candidate);
+return ALLOWED_CELESTIAL_ORIGINS.some((trusted) => candOrigin.isSameOrigin(Origin.from(trusted)));
+}
+const parsed = new URL(String(candidate));
+return parsed.origin !== 'null' && ALLOWED_CELESTIAL_ORIGINS.includes(parsed.origin);
+} catch {
+return false;
+}
+}
+async function openCelestialSourcePage(target) {
+if (!target?.url || !isAllowedCelestialUrl(target.url)) return;
+visualizer.triggerStarClickFeedback(target.x, target.y, target.color);
+showToast(`Opening Wikipedia: ${target.name}`);
+if (invoke) {
+try {
+await invoke('open_external_url', { url: target.url });
+return;
+} catch {
+}
+}
+const opened = window.open(target.url, '_blank', 'noopener,noreferrer');
+if (!opened) {
+const a = document.createElement('a');
+a.href = target.url;
+a.target = '_blank';
+a.rel = 'noopener noreferrer';
+a.style.display = 'none';
+document.body.appendChild(a);
+a.click();
+a.remove();
+}
+}
+function setCtrlStarHover(active) {
+const next = Boolean(active);
+if (state.ctrlHoverActive === next) return;
+state.ctrlHoverActive = next;
+document.body.classList.toggle('ctrl-star-hover', next);
+}
 function hideInspector() {
 if (!state.inspectorHidden) {
 state.inspectorHidden = true;
@@ -6613,16 +7071,30 @@ state.lastInspectedKey = '';
 }
 }
 function updateStarInspector() {
-if (!state.settings.hoverInspector || !state.pointer.inside || state.settingsOpen || state.drag.active) {
+if (!state.pointer.inside || state.settingsOpen || state.drag.active) {
+if (visualizer.hoveredTarget) visualizer.hitTest(-9999, -9999);
+setCtrlStarHover(false);
+hideInspector();
+return;
+}
+if (!state.settings.hoverInspector) {
 if (visualizer.hoveredTarget) visualizer.hitTest(-9999, -9999);
 hideInspector();
+if (state.ctrlHeld) {
+const ctrlHit = visualizer.pickCelestialAt(state.pointer.x, state.pointer.y);
+setCtrlStarHover(Boolean(ctrlHit?.url));
+} else {
+setCtrlStarHover(false);
+}
 return;
 }
 const hit = visualizer.hitTest(state.pointer.x, state.pointer.y);
 if (!hit) {
+setCtrlStarHover(false);
 hideInspector();
 return;
 }
+setCtrlStarHover(Boolean(state.ctrlHeld && hit.url));
 const key = `${hit.kind}:${hit.name}:${hit.meta || ''}`;
 let needsMeasure = false;
 if (key !== state.lastInspectedKey) {
@@ -6815,6 +7287,7 @@ scheduleTick();
 }
 });
 window.addEventListener('mousemove', (e) => {
+state.ctrlHeld = Boolean(e.ctrlKey || e.metaKey);
 showHud(false);
 if (e.target === canvas) {
 state.pointer.x = e.clientX;
@@ -6823,10 +7296,22 @@ state.pointer.inside = true;
 visualizer.pointerActiveUntil = performance.now() + 400;
 } else {
 state.pointer.inside = false;
+setCtrlStarHover(false);
 }
 });
 document.addEventListener('mouseleave', () => {
 state.pointer.inside = false;
+setCtrlStarHover(false);
+});
+window.addEventListener('blur', () => {
+state.ctrlHeld = false;
+setCtrlStarHover(false);
+});
+window.addEventListener('keyup', (e) => {
+if (e.key === 'Control' || e.key === 'Meta') {
+state.ctrlHeld = false;
+setCtrlStarHover(false);
+}
 });
 canvas.addEventListener('wheel', (e) => {
 e.preventDefault();
@@ -6834,6 +7319,15 @@ const step = e.deltaY < 0 ? 0.1 : -0.1;
 adjustZoom(step, true);
 }, { passive: false });
 canvas.addEventListener('pointerdown', (e) => {
+if (e.button === 0 && (e.ctrlKey || e.metaKey)) {
+const hit = visualizer.pickCelestialAt(e.clientX, e.clientY);
+if (hit?.url) {
+e.preventDefault();
+e.stopPropagation();
+openCelestialSourcePage(hit);
+return;
+}
+}
 if (!state.settings.freeExplore || e.button !== 0) return;
 canvas.setPointerCapture?.(e.pointerId);
 state.drag = {
@@ -7175,6 +7669,9 @@ syncLyricPrefsToBackend();
 showToast('Settings reset to defaults');
 });
 window.addEventListener('keydown', (e) => {
+if (e.key === 'Control' || e.key === 'Meta') {
+state.ctrlHeld = true;
+}
 if (e.key === 'F11') {
 e.preventDefault();
 toggleFullscreen();
@@ -7259,6 +7756,13 @@ document.body.classList.toggle('wallpaper-mode', next);
 visualizer.resize();
 recomputeBottomClearY();
 }
+let weLookupTimer = null;
+function scheduleWeLyricsLookup(force = false, delayMs = 140) {
+clearTimeout(weLookupTimer);
+weLookupTimer = setTimeout(() => {
+lookupBrowserLyrics(force);
+}, delayMs);
+}
 async function lookupBrowserLyrics(force = false) {
 const m = state.media;
 if (!m.hasSession || !m.title) return;
@@ -7268,6 +7772,7 @@ if (!force && state.weLyricsCache.has(trackKey)) {
 applyLyricsUpdate(state.weLyricsCache.get(trackKey));
 return;
 }
+state.weLastLookupDurSec = m.endSec || 0;
 applyLyricsLoading({ trackKey });
 const result = await fetchLyricsInBrowser(
 trackKey,
@@ -7430,8 +7935,14 @@ if (props.fontpreset && props.fontpreset.value !== undefined) {
 state.settings.fontPreset = String(props.fontpreset.value);
 }
 if (props.lyricpreferred && props.lyricpreferred.value !== undefined) {
-state.settings.lyricPreferred = String(props.lyricpreferred.value);
-if (!invoke && state.media.hasSession) lookupBrowserLyrics(true);
+const nextPref = String(props.lyricpreferred.value);
+if (nextPref !== state.settings.lyricPreferred) {
+state.settings.lyricPreferred = nextPref;
+state.weLyricsCache.clear();
+if (!invoke && state.media.hasSession) {
+scheduleWeLyricsLookup(true, 40);
+}
+}
 }
 if (props.demomode && props.demomode.value !== undefined) {
 const wantDemo = Boolean(props.demomode.value);
@@ -7486,8 +7997,10 @@ sampledAtMs: Date.now(),
 };
 applyMediaUpdate(nextMedia);
 if (hasSession && nextKey !== prevKey) {
-lookupBrowserLyrics(false);
+state.weLastLookupDurSec = 0;
+scheduleWeLyricsLookup(false, 140);
 } else if (!hasSession) {
+clearTimeout(weLookupTimer);
 applyLyricsUpdate({ trackKey: '', found: false, synced: false, wordSynced: false, lines: [], source: 'none' });
 }
 });
@@ -7510,13 +8023,33 @@ sampledAtMs: Date.now(),
 if (typeof window.wallpaperRegisterMediaTimelineListener === 'function') {
 window.wallpaperRegisterMediaTimelineListener((evt) => {
 if (!evt) return;
+const nextDur = Number(evt.duration) || 0;
 applyMediaUpdate({
 ...state.media,
 positionSec: Number(evt.position) || 0,
-endSec: Number(evt.duration) || 0,
+endSec: nextDur,
 lastUpdatedMs: Date.now(),
 sampledAtMs: Date.now(),
 });
+if (
+!invoke &&
+state.media.hasSession &&
+state.weLastLookupDurSec < 5 &&
+nextDur >= 10 &&
+!state.lyricsLoading
+) {
+const pref = state.settings.lyricPreferred || 'auto';
+const src = String(state.lyrics.source || '');
+const hitTopOrPref =
+pref !== 'auto'
+? src.startsWith(`${pref}:`)
+: src.startsWith('limusic:') || src.startsWith('boidu:');
+if (!state.lyrics.synced || !hitTopOrPref) {
+state.weLastLookupDurSec = nextDur;
+state.weLyricsCache.delete(state.currentTrackKey);
+scheduleWeLyricsLookup(true, 60);
+}
+}
 });
 }
 if (typeof window.wallpaperRegisterMediaThumbnailListener === 'function') {
@@ -7557,27 +8090,13 @@ await listen('wallpaper-mode', (event) => {
 applyWallpaperMode(Boolean(event.payload));
 });
 try {
+await syncLyricPrefsToBackend();
 const initial = await invoke('get_initial_state');
 if (initial?.wallpaperMode) applyWallpaperMode(true);
 if (initial?.media) applyMediaUpdate(initial.media);
 state.lyricsLoading = Boolean(initial?.lyricsLoading);
 if (initial?.lyrics && (!initial.lyrics.trackKey || initial.lyrics.trackKey === state.currentTrackKey)) {
 applyLyricsUpdate(initial.lyrics, state.lyricsLoading);
-}
-const s = state.settings;
-if (
-(s.lyricPreferred && s.lyricPreferred !== 'auto') ||
-!s.enableLimusic ||
-!s.enableBoidu ||
-!s.enableUnison ||
-!s.enableLyricsplus ||
-!s.enableLrclib ||
-!s.enableYtmusic ||
-!s.enableNetease ||
-!s.enableQqmusic ||
-!s.enableKugou
-) {
-syncLyricPrefsToBackend();
 }
 } catch {
 }

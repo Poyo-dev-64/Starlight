@@ -233,16 +233,16 @@
       },
       "lyricpreferred": {
         "options": [
-          { "label": "Auto (Best Synced)", "value": "auto" },
-          { "label": "Limusic (via Boidu)", "value": "limusic" },
-          { "label": "Boidu (Better Lyrics)", "value": "boidu" },
-          { "label": "Unison", "value": "unison" },
-          { "label": "LyricsPlus", "value": "lyricsplus" },
-          { "label": "LRCLIB", "value": "lrclib" },
-          { "label": "YouTube Music", "value": "ytmusic" },
-          { "label": "Netease Cloud Music", "value": "netease" },
-          { "label": "QQ Music", "value": "qqmusic" },
-          { "label": "Kugou", "value": "kugou" }
+          { "label": "Auto (Limusic / Boidu -> LyricsPlus -> Others)", "value": "auto" },
+          { "label": "1. Limusic (via Boidu)", "value": "limusic" },
+          { "label": "1. Boidu (Better Lyrics)", "value": "boidu" },
+          { "label": "2. LyricsPlus", "value": "lyricsplus" },
+          { "label": "3. Unison", "value": "unison" },
+          { "label": "3. LRCLIB", "value": "lrclib" },
+          { "label": "3. Netease Cloud Music", "value": "netease" },
+          { "label": "3. YouTube Music", "value": "ytmusic" },
+          { "label": "3. QQ Music", "value": "qqmusic" },
+          { "label": "3. Kugou", "value": "kugou" }
         ],
         "order": 24,
         "text": "Preferred Lyric Provider",

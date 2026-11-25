@@ -361,6 +361,8 @@ const state = {
   drag: { active: false, pointerId: null, lastX: 0, lastY: 0, lastMs: 0 },
   lastExploreNearestIdx: -1,
   pointer: { x: -1, y: -1, inside: false },
+  ctrlHeld: false,
+  ctrlHoverActive: false,
   lastInspectedKey: '',
   inspectorHidden: true,
   inspectorWidth: 240,
@@ -371,6 +373,7 @@ const state = {
   wallpaperModeActive: false,
   weEnv: false,
   wePaused: false,
+  weLastLookupDurSec: 0,
   docHiddenPaused: false,
   rafScheduled: false,
   weTargetFps: 0,
@@ -743,9 +746,9 @@ function syncLyricPrefsToBackend() {
     if (state.media.hasSession) {
       lookupBrowserLyrics(true);
     }
-    return;
+    return Promise.resolve();
   }
-  invoke('set_lyric_prefs', {
+  return invoke('set_lyric_prefs', {
     prefs: {
       preferred: state.settings.lyricPreferred || 'auto',
       enableLimusic: Boolean(state.settings.enableLimusic),
@@ -1216,6 +1219,59 @@ function handleSoftWordLimit(lyric) {
   }
 }
 
+const ALLOWED_CELESTIAL_ORIGINS = [
+  'https://en.wikipedia.org',
+  'https://simbad.cds.unistra.fr',
+  'https://science.nasa.gov',
+];
+
+function isAllowedCelestialUrl(candidate) {
+  try {
+    if ('Origin' in globalThis) {
+      const candOrigin = Origin.from(candidate);
+      return ALLOWED_CELESTIAL_ORIGINS.some((trusted) => candOrigin.isSameOrigin(Origin.from(trusted)));
+    }
+    const parsed = new URL(String(candidate));
+    return parsed.origin !== 'null' && ALLOWED_CELESTIAL_ORIGINS.includes(parsed.origin);
+  } catch {
+    return false;
+  }
+}
+
+async function openCelestialSourcePage(target) {
+  if (!target?.url || !isAllowedCelestialUrl(target.url)) return;
+  visualizer.triggerStarClickFeedback(target.x, target.y, target.color);
+  showToast(`Opening Wikipedia: ${target.name}`);
+
+  if (invoke) {
+    try {
+      await invoke('open_external_url', { url: target.url });
+      return;
+    } catch {
+      // Fall back to standard browser navigation if Tauri shell invoke fails
+    }
+  }
+
+  const opened = window.open(target.url, '_blank', 'noopener,noreferrer');
+  if (!opened) {
+    const a = document.createElement('a');
+    a.href = target.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+}
+
+function setCtrlStarHover(active) {
+  const next = Boolean(active);
+  if (state.ctrlHoverActive === next) return;
+  state.ctrlHoverActive = next;
+  document.body.classList.toggle('ctrl-star-hover', next);
+}
+
 function hideInspector() {
   if (!state.inspectorHidden) {
     state.inspectorHidden = true;
@@ -1225,17 +1281,33 @@ function hideInspector() {
 }
 
 function updateStarInspector() {
-  if (!state.settings.hoverInspector || !state.pointer.inside || state.settingsOpen || state.drag.active) {
+  if (!state.pointer.inside || state.settingsOpen || state.drag.active) {
+    if (visualizer.hoveredTarget) visualizer.hitTest(-9999, -9999);
+    setCtrlStarHover(false);
+    hideInspector();
+    return;
+  }
+
+  if (!state.settings.hoverInspector) {
     if (visualizer.hoveredTarget) visualizer.hitTest(-9999, -9999);
     hideInspector();
+    if (state.ctrlHeld) {
+      const ctrlHit = visualizer.pickCelestialAt(state.pointer.x, state.pointer.y);
+      setCtrlStarHover(Boolean(ctrlHit?.url));
+    } else {
+      setCtrlStarHover(false);
+    }
     return;
   }
 
   const hit = visualizer.hitTest(state.pointer.x, state.pointer.y);
   if (!hit) {
+    setCtrlStarHover(false);
     hideInspector();
     return;
   }
+
+  setCtrlStarHover(Boolean(state.ctrlHeld && hit.url));
 
   const key = `${hit.kind}:${hit.name}:${hit.meta || ''}`;
   let needsMeasure = false;
@@ -1458,6 +1530,7 @@ function wireControls() {
   });
 
   window.addEventListener('mousemove', (e) => {
+    state.ctrlHeld = Boolean(e.ctrlKey || e.metaKey);
     showHud(false);
     if (e.target === canvas) {
       state.pointer.x = e.clientX;
@@ -1466,10 +1539,22 @@ function wireControls() {
       visualizer.pointerActiveUntil = performance.now() + 400;
     } else {
       state.pointer.inside = false;
+      setCtrlStarHover(false);
     }
   });
   document.addEventListener('mouseleave', () => {
     state.pointer.inside = false;
+    setCtrlStarHover(false);
+  });
+  window.addEventListener('blur', () => {
+    state.ctrlHeld = false;
+    setCtrlStarHover(false);
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.key === 'Control' || e.key === 'Meta') {
+      state.ctrlHeld = false;
+      setCtrlStarHover(false);
+    }
   });
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -1478,6 +1563,15 @@ function wireControls() {
   }, { passive: false });
 
   canvas.addEventListener('pointerdown', (e) => {
+    if (e.button === 0 && (e.ctrlKey || e.metaKey)) {
+      const hit = visualizer.pickCelestialAt(e.clientX, e.clientY);
+      if (hit?.url) {
+        e.preventDefault();
+        e.stopPropagation();
+        openCelestialSourcePage(hit);
+        return;
+      }
+    }
     if (!state.settings.freeExplore || e.button !== 0) return;
     canvas.setPointerCapture?.(e.pointerId);
     state.drag = {
@@ -1864,6 +1958,9 @@ function wireControls() {
   });
 
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'Control' || e.key === 'Meta') {
+      state.ctrlHeld = true;
+    }
     if (e.key === 'F11') {
       e.preventDefault();
       toggleFullscreen();
@@ -1950,6 +2047,15 @@ function applyWallpaperMode(enabled) {
   recomputeBottomClearY();
 }
 
+let weLookupTimer = null;
+
+function scheduleWeLyricsLookup(force = false, delayMs = 140) {
+  clearTimeout(weLookupTimer);
+  weLookupTimer = setTimeout(() => {
+    lookupBrowserLyrics(force);
+  }, delayMs);
+}
+
 async function lookupBrowserLyrics(force = false) {
   const m = state.media;
   if (!m.hasSession || !m.title) return;
@@ -1960,6 +2066,7 @@ async function lookupBrowserLyrics(force = false) {
     return;
   }
 
+  state.weLastLookupDurSec = m.endSec || 0;
   applyLyricsLoading({ trackKey });
   const result = await fetchLyricsInBrowser(
     trackKey,
@@ -2135,8 +2242,14 @@ function registerWallpaperEngineHooks() {
         state.settings.fontPreset = String(props.fontpreset.value);
       }
       if (props.lyricpreferred && props.lyricpreferred.value !== undefined) {
-        state.settings.lyricPreferred = String(props.lyricpreferred.value);
-        if (!invoke && state.media.hasSession) lookupBrowserLyrics(true);
+        const nextPref = String(props.lyricpreferred.value);
+        if (nextPref !== state.settings.lyricPreferred) {
+          state.settings.lyricPreferred = nextPref;
+          state.weLyricsCache.clear();
+          if (!invoke && state.media.hasSession) {
+            scheduleWeLyricsLookup(true, 40);
+          }
+        }
       }
       if (props.demomode && props.demomode.value !== undefined) {
         const wantDemo = Boolean(props.demomode.value);
@@ -2195,8 +2308,10 @@ function registerWallpaperEngineHooks() {
       };
       applyMediaUpdate(nextMedia);
       if (hasSession && nextKey !== prevKey) {
-        lookupBrowserLyrics(false);
+        state.weLastLookupDurSec = 0;
+        scheduleWeLyricsLookup(false, 140);
       } else if (!hasSession) {
+        clearTimeout(weLookupTimer);
         applyLyricsUpdate({ trackKey: '', found: false, synced: false, wordSynced: false, lines: [], source: 'none' });
       }
     });
@@ -2221,13 +2336,34 @@ function registerWallpaperEngineHooks() {
   if (typeof window.wallpaperRegisterMediaTimelineListener === 'function') {
     window.wallpaperRegisterMediaTimelineListener((evt) => {
       if (!evt) return;
+      const nextDur = Number(evt.duration) || 0;
       applyMediaUpdate({
         ...state.media,
         positionSec: Number(evt.position) || 0,
-        endSec: Number(evt.duration) || 0,
+        endSec: nextDur,
         lastUpdatedMs: Date.now(),
         sampledAtMs: Date.now(),
       });
+
+      if (
+        !invoke &&
+        state.media.hasSession &&
+        state.weLastLookupDurSec < 5 &&
+        nextDur >= 10 &&
+        !state.lyricsLoading
+      ) {
+        const pref = state.settings.lyricPreferred || 'auto';
+        const src = String(state.lyrics.source || '');
+        const hitTopOrPref =
+          pref !== 'auto'
+            ? src.startsWith(`${pref}:`)
+            : src.startsWith('limusic:') || src.startsWith('boidu:');
+        if (!state.lyrics.synced || !hitTopOrPref) {
+          state.weLastLookupDurSec = nextDur;
+          state.weLyricsCache.delete(state.currentTrackKey);
+          scheduleWeLyricsLookup(true, 60);
+        }
+      }
     });
   }
 
@@ -2273,28 +2409,13 @@ async function init() {
     });
 
     try {
+      await syncLyricPrefsToBackend();
       const initial = await invoke('get_initial_state');
       if (initial?.wallpaperMode) applyWallpaperMode(true);
       if (initial?.media) applyMediaUpdate(initial.media);
       state.lyricsLoading = Boolean(initial?.lyricsLoading);
       if (initial?.lyrics && (!initial.lyrics.trackKey || initial.lyrics.trackKey === state.currentTrackKey)) {
         applyLyricsUpdate(initial.lyrics, state.lyricsLoading);
-      }
-
-      const s = state.settings;
-      if (
-        (s.lyricPreferred && s.lyricPreferred !== 'auto') ||
-        !s.enableLimusic ||
-        !s.enableBoidu ||
-        !s.enableUnison ||
-        !s.enableLyricsplus ||
-        !s.enableLrclib ||
-        !s.enableYtmusic ||
-        !s.enableNetease ||
-        !s.enableQqmusic ||
-        !s.enableKugou
-      ) {
-        syncLyricPrefsToBackend();
       }
     } catch {
       // Backend may still be warming up; events will populate

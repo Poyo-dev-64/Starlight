@@ -5,6 +5,10 @@ import {
   computeOrbitingSatellites,
   computeSpacecraft,
   raDecToVec3,
+  resolveConstellationWikiUrl,
+  resolveDeepSkyWikiUrl,
+  resolveObjectWikiUrl,
+  resolveStarWikiUrl,
 } from './celestial.js';
 
 function clamp(v, min, max) {
@@ -582,6 +586,7 @@ export class StarVisualizer {
       dir: raDecToVec3(obj.ra, obj.dec),
       metaStr: `Mag ${obj.mag.toFixed(1)} · ${obj.distance} · ${obj.constellation}`,
       titleName: `${obj.id} · ${obj.name}`,
+      wikiUrl: resolveDeepSkyWikiUrl(obj),
     }));
     this.starSprites = this._buildStarSprites();
 
@@ -688,6 +693,7 @@ export class StarVisualizer {
         edgesFlat[e * 2 + 1] = c.edges[e][1];
       }
 
+      const cWikiUrl = resolveConstellationWikiUrl(c.name);
       const projPool = c.stars.map((s, idx) => ({
         ...s,
         renderColor: s.color,
@@ -698,10 +704,12 @@ export class StarVisualizer {
         metaAmbient: `Mag ${s.mag.toFixed(1)} · ${c.title}`,
         fallbackHeroName: `${c.name} Star #${idx + 1}`,
         fallbackAmbName: s.name || `${c.name} Star`,
+        wikiUrl: resolveStarWikiUrl(s.name, c.name),
       }));
 
       return {
         constellation: c,
+        wikiUrl: cWikiUrl,
         centerDir: C,
         uDir: U,
         vDir: V,
@@ -1541,17 +1549,18 @@ export class StarVisualizer {
           starCounts[bIdx] = sOff + 3;
         }
 
-        if (this.collectHitTargets && s.z > 0.08 && (s.name || s.mag < 2.2) && s.sx > -20 && s.sx < w + 20 && s.sy > -20 && s.sy < h + 20) {
+        if (this.collectHitTargets && s.z > 0.08 && s.sx > -20 && s.sx < w + 20 && s.sy > -20 && s.sy < h + 20) {
           this.hitTargets.push({
             x: s.sx,
             y: s.sy,
-            hitRadius: 12,
-            priority: s.name ? 1.5 : 0.8,
+            hitRadius: 13,
+            priority: s.name ? 1.5 : 0.85,
             kind: cObj.name,
             name: s.fallbackAmbName,
             meta: s.metaAmbient,
             note: cObj.fact,
             color: s.renderColor || this.theme.brand,
+            url: s.wikiUrl,
           });
         }
 
@@ -1781,6 +1790,7 @@ export class StarVisualizer {
           meta: obj.metaStr,
           note: obj.note,
           color: obj.color,
+          url: obj.wikiUrl,
         });
       }
     }
@@ -1924,6 +1934,7 @@ export class StarVisualizer {
           meta,
           note: body.note,
           color: body.color,
+          url: body.wikiUrl || (body.wikiUrl = resolveObjectWikiUrl(body.id)),
         });
       }
     }
@@ -2001,6 +2012,7 @@ export class StarVisualizer {
             meta,
             note: probe.note,
             color: probe.color,
+            url: probe.wikiUrl || (probe.wikiUrl = resolveObjectWikiUrl(probe.id)),
           });
         }
       }
@@ -2064,6 +2076,7 @@ export class StarVisualizer {
           meta: `Alt ${sat.altitude} · ${sat.speed}`,
           note: sat.note,
           color: sat.color,
+          url: sat.wikiUrl || (sat.wikiUrl = resolveObjectWikiUrl(sat.id)),
         });
       }
     }
@@ -2092,6 +2105,158 @@ export class StarVisualizer {
     }
     this.hoveredTarget = best;
     return best;
+  }
+
+  /**
+   * Picks the closest visible star, deep-sky object, planet/Moon, probe, or satellite at `(x, y)`
+   * on Ctrl+Click — works even when `hoverInspector` is disabled.
+   */
+  pickCelestialAt(x, y) {
+    if (x < 0 || y < 0) return null;
+
+    if (this.hitTargets.length > 0) {
+      let best = null;
+      let bestScore = Infinity;
+      for (let i = 0; i < this.hitTargets.length; i++) {
+        const t = this.hitTargets[i];
+        if (!t.url) continue;
+        const r = (t.hitRadius || 15) + 4;
+        const dx = t.x - x;
+        const dy = t.y - y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 <= r * r) {
+          const score = Math.sqrt(d2) - (t.priority || 1) * 3.5;
+          if (score < bestScore) {
+            bestScore = score;
+            best = t;
+          }
+        }
+      }
+      if (best) return best;
+    }
+
+    // On-demand 3D projection fallback when hitTargets was skipped (e.g. hoverInspector off)
+    const m = this.rotMat;
+    const m00 = m[0], m01 = m[1], m02 = m[2];
+    const m10 = m[3], m11 = m[4], m12 = m[5];
+    const m20 = m[6], m21 = m[7], m22 = m[8];
+    const cx = this.width * 0.5;
+    const cy = this.height * 0.48;
+    const domeRadius = this.lastDomeRadius || 400;
+    const activeIdx = this.transition ? this.transition.toIndex : this.heroIndex;
+
+    let best = null;
+    let bestScore = Infinity;
+    const consider = (sx, sy, radius, priority, name, kind, url, color) => {
+      const dx = sx - x;
+      const dy = sy - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= radius * radius) {
+        const score = Math.sqrt(d2) - priority * 3.5;
+        if (score < bestScore) {
+          bestScore = score;
+          best = { x: sx, y: sy, name, kind, url, color };
+        }
+      }
+    };
+
+    const projectDir = (d, minZ) => {
+      const vz = m20 * d[0] + m21 * d[1] + m22 * d[2];
+      if (vz <= minZ) return null;
+      const k = domeRadius / (1 + (vz < 1.22 ? (1 - vz) * 0.28 : -0.0616));
+      return [cx + (m00 * d[0] + m01 * d[1] + m02 * d[2]) * k, cy + (m10 * d[0] + m11 * d[1] + m12 * d[2]) * k];
+    };
+
+    for (let ci = 0; ci < this.skyConstellations.length; ci++) {
+      const sky = this.skyConstellations[ci];
+      const cd = sky.centerDir;
+      const cz = m20 * cd[0] + m21 * cd[1] + m22 * cd[2];
+      if (cz <= -0.14) continue;
+      const isHero = ci === activeIdx;
+      const flat = sky.starDirsFlat;
+      const pool = sky.projPool;
+      for (let si = 0, j = 0; si < pool.length; si++, j += 3) {
+        const dx = flat[j], dy = flat[j + 1], dz = flat[j + 2];
+        const vz = m20 * dx + m21 * dy + m22 * dz;
+        if (vz <= (isHero ? 0.01 : 0.08)) continue;
+        const k = domeRadius / (1 + (vz < 1.22 ? (1 - vz) * 0.28 : -0.0616));
+        const sx = cx + (m00 * dx + m01 * dy + m02 * dz) * k;
+        const sy = cy + (m10 * dx + m11 * dy + m12 * dz) * k;
+        const s = pool[si];
+        consider(
+          sx,
+          sy,
+          isHero ? 19 : 16,
+          isHero ? (s.name ? 3.2 : 2.2) : (s.name ? 1.5 : 0.85),
+          s.name || (isHero ? s.fallbackHeroName : s.fallbackAmbName),
+          sky.constellation.name,
+          s.wikiUrl,
+          s.renderColor || this.theme.brand
+        );
+      }
+    }
+
+    if (this.settings.showDeepSky) {
+      for (let i = 0; i < this.skyDeepSky.length; i++) {
+        const obj = this.skyDeepSky[i];
+        const pt = projectDir(obj.dir, 0.04);
+        if (pt) consider(pt[0], pt[1], 20, 2.4, obj.titleName, obj.kind, obj.wikiUrl, obj.color);
+      }
+      if (this.solarSystem?.bodies) {
+        for (let i = 0; i < this.solarSystem.bodies.length; i++) {
+          const b = this.solarSystem.bodies[i];
+          const pt = projectDir(b.dir, 0.02);
+          if (pt) {
+            consider(pt[0], pt[1], 20, 3.3, b.name, b.kind, b.wikiUrl || resolveObjectWikiUrl(b.id), b.color);
+          }
+        }
+      }
+    }
+
+    if (this.settings.showSatellites) {
+      if (this.spacecraft) {
+        for (let i = 0; i < this.spacecraft.length; i++) {
+          const p = this.spacecraft[i];
+          const pt = projectDir(p.dir, 0.02);
+          if (pt) {
+            consider(pt[0], pt[1], 22, p.featured ? 4.4 : 3.8, p.name, p.kind, p.wikiUrl || resolveObjectWikiUrl(p.id), p.color);
+          }
+        }
+      }
+      const sats = computeOrbitingSatellites(this.lastFrameTime * 0.001);
+      for (let i = 0; i < sats.length; i++) {
+        const sat = sats[i];
+        const pt = projectDir(sat.dir, 0.04);
+        if (pt) {
+          consider(pt[0], pt[1], 22, 4.1, sat.name, sat.kind, sat.wikiUrl || resolveObjectWikiUrl(sat.id), sat.color);
+        }
+      }
+    }
+
+    return best;
+  }
+
+  triggerStarClickFeedback(x, y, color) {
+    const col = color || this.theme.brand;
+    this.ripples.push({
+      x,
+      y,
+      radius: 4,
+      maxRadius: 56,
+      alpha: 0.92,
+      speed: 96,
+      color: col,
+    });
+    this.ripples.push({
+      x,
+      y,
+      radius: 2,
+      maxRadius: 32,
+      alpha: 0.65,
+      speed: 62,
+      color: '#ffffff',
+    });
+    this._spawnEmberBurst(x, y, col);
   }
 
   _drawHoverReticle(ctx, target, nowSec) {
@@ -2654,6 +2819,7 @@ export class StarVisualizer {
           meta: s.metaAmbient,
           note: hero.fact,
           color: sCol || this.theme.brand,
+          url: s.wikiUrl,
         });
       }
     }

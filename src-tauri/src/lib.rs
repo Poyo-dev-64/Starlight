@@ -9,6 +9,9 @@ use smtc::{create_session_manager, MediaState, SmtcPoller};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
+use windows::core::PCWSTR;
+use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,18 +83,30 @@ async fn set_lyric_prefs(
     ctx: State<'_, AppContext>,
     prefs: LyricProviderPrefs,
 ) -> Result<(), String> {
-    ctx.lyrics_service.set_prefs(prefs).await;
+    let pref_target = prefs.preferred.trim().to_string();
+    let changed = ctx.lyrics_service.set_prefs(prefs).await;
+
     let media_opt = {
         let mut guard = ctx.shared.lock().unwrap();
-        if guard.media.track_key().is_empty() {
+        let tk = guard.media.track_key();
+        if tk.is_empty() {
             None
         } else {
-            guard.lyrics = LyricsPayload::empty(guard.media.track_key());
-            guard.lyrics_loading = true;
-            Some(guard.media.clone())
+            let source_mismatch = !pref_target.is_empty()
+                && pref_target != "auto"
+                && !guard.lyrics.source.starts_with(&pref_target);
+            if changed || source_mismatch {
+                guard.lyrics = LyricsPayload::empty(tk);
+                guard.lyrics_loading = true;
+                Some(guard.media.clone())
+            } else {
+                None
+            }
         }
     };
+
     if let Some(media) = media_opt {
+        ctx.lyrics_service.invalidate(&media.track_key()).await;
         spawn_lyrics_lookup(app, ctx.shared.clone(), ctx.lyrics_service.clone(), media);
     }
     Ok(())
@@ -109,6 +124,39 @@ async fn media_seek(position_sec: f64) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || smtc::seek_playback(position_sec))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    let allowed = trimmed.starts_with("https://en.wikipedia.org/wiki/")
+        || trimmed.starts_with("https://simbad.cds.unistra.fr/")
+        || trimmed.starts_with("https://science.nasa.gov/");
+    if !allowed
+        || trimmed.len() > 512
+        || trimmed.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err("Blocked untrusted external URL".to_string());
+    }
+
+    let verb: Vec<u16> = "open\0".encode_utf16().collect();
+    let mut target: Vec<u16> = trimmed.encode_utf16().collect();
+    target.push(0);
+
+    let res = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(target.as_ptr()),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    if (res.0 as isize) <= 32 {
+        return Err(format!("ShellExecuteW failed with code {}", res.0 as isize));
+    }
+    Ok(())
 }
 
 fn spawn_lyrics_lookup(
@@ -190,6 +238,7 @@ fn start_smtc_thread(
         let mut poller = SmtcPoller::new();
         let mut last_emitted = MediaState::empty(0);
         let mut last_heartbeat = Instant::now();
+        let mut last_lookup_dur_sec = 0.0f64;
 
         loop {
             if manager.is_none() {
@@ -209,6 +258,7 @@ fn start_smtc_thread(
 
             let track_key = state.track_key();
             let mut track_changed = false;
+            let mut should_retry_with_duration = false;
 
             {
                 let mut guard = shared.lock().unwrap();
@@ -218,7 +268,19 @@ fn start_smtc_thread(
                     guard.lyrics = LyricsPayload::empty(track_key.clone());
                     guard.lyrics_loading = !track_key.is_empty();
                     guard.lookup_gen = guard.lookup_gen.wrapping_add(1);
+                    last_lookup_dur_sec = state.end_sec;
                     track_changed = true;
+                } else if !track_key.is_empty()
+                    && last_lookup_dur_sec < 5.0
+                    && state.end_sec >= 10.0
+                    && !guard.lyrics_loading
+                {
+                    let src = guard.lyrics.source.as_str();
+                    let top_hit = src.starts_with("limusic:") || src.starts_with("boidu:");
+                    if !guard.lyrics.synced || !top_hit {
+                        last_lookup_dur_sec = state.end_sec;
+                        should_retry_with_duration = true;
+                    }
                 }
             }
 
@@ -244,6 +306,23 @@ fn start_smtc_thread(
                         state,
                     );
                 }
+            } else if should_retry_with_duration {
+                let ls = lyrics_service.clone();
+                let tk = track_key.clone();
+                let app_clone = app.clone();
+                let shared_clone = shared.clone();
+                let media_clone = state;
+                tauri::async_runtime::spawn(async move {
+                    let pref = ls.preferred_source().await;
+                    let already_matches_pref = {
+                        let guard = shared_clone.lock().unwrap();
+                        pref != "auto" && guard.lyrics.synced && guard.lyrics.source.starts_with(&pref)
+                    };
+                    if !already_matches_pref {
+                        ls.invalidate(&tk).await;
+                        spawn_lyrics_lookup(app_clone, shared_clone, ls, media_clone);
+                    }
+                });
             }
 
             std::thread::sleep(Duration::from_millis(if has_active_session { 250 } else { 500 }));
@@ -278,7 +357,8 @@ pub fn run() {
             refresh_lyrics,
             set_lyric_prefs,
             media_control,
-            media_seek
+            media_seek,
+            open_external_url
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

@@ -120,6 +120,9 @@ impl Default for LyricProviderPrefs {
 
 impl LyricProviderPrefs {
     fn is_enabled(&self, id: &str) -> bool {
+        if self.preferred == id {
+            return true;
+        }
         match id {
             "limusic" => self.enable_limusic,
             "boidu" => self.enable_boidu,
@@ -160,10 +163,20 @@ impl LyricsService {
         }
     }
 
-    pub async fn set_prefs(&self, next: LyricProviderPrefs) {
+    pub async fn set_prefs(&self, next: LyricProviderPrefs) -> bool {
+        let mut guard = self.prefs.lock().await;
+        if *guard == next {
+            return false;
+        }
         self.prefs_gen.fetch_add(1, Ordering::SeqCst);
-        *self.prefs.lock().await = next;
+        *guard = next;
+        drop(guard);
         self.cache.lock().await.clear();
+        true
+    }
+
+    pub async fn preferred_source(&self) -> String {
+        self.prefs.lock().await.preferred.clone()
     }
 
     pub async fn invalidate(&self, track_key: &str) {
@@ -221,12 +234,28 @@ impl LyricsService {
     ) -> LyricsPayload {
         match id {
             "limusic" => {
-                self.fetch_limusic(track_key, clean_title, clean_artist, raw_album, duration_sec)
-                    .await
+                self.fetch_limusic(
+                    track_key,
+                    derived_title,
+                    derived_artist,
+                    clean_title,
+                    clean_artist,
+                    raw_album,
+                    duration_sec,
+                )
+                .await
             }
             "boidu" => {
-                self.fetch_boidu(track_key, clean_title, clean_artist, raw_album, duration_sec)
-                    .await
+                self.fetch_boidu(
+                    track_key,
+                    derived_title,
+                    derived_artist,
+                    clean_title,
+                    clean_artist,
+                    raw_album,
+                    duration_sec,
+                )
+                .await
             }
             "unison" => {
                 self.fetch_unison(track_key, clean_title, clean_artist, raw_album, duration_sec)
@@ -278,11 +307,11 @@ impl LyricsService {
         let clean_artist = clean_artist_name(&derived_artist);
 
         let prefs = self.prefs.lock().await.clone();
-        let pref_id = prefs.preferred.as_str();
+        let pref_id = prefs.preferred.trim();
         let mut plain_candidates: Vec<LyricsPayload> = Vec::new();
 
-        // 1. If a specific Preferred Source is set and enabled, fetch ONLY from it FIRST.
-        if pref_id != "auto" && prefs.is_enabled(pref_id) {
+        // 0. Explicit Preferred Source: query ONLY it first before any fallback tier.
+        if !pref_id.is_empty() && pref_id != "auto" && prefs.is_enabled(pref_id) {
             let pref_res = self
                 .fetch_by_id(
                     pref_id,
@@ -303,56 +332,108 @@ impl LyricsService {
             }
         }
 
-        // 2. Fallback Stage A: high-precision word-by-word + fast synced databases
-        let limusic_ok = "limusic" != pref_id && prefs.is_enabled("limusic");
-        let boidu_ok = "boidu" != pref_id && prefs.is_enabled("boidu");
-        let unison_ok = "unison" != pref_id && prefs.is_enabled("unison");
-        let lp_ok = "lyricsplus" != pref_id && prefs.is_enabled("lyricsplus");
-        let lrclib_ok = "lrclib" != pref_id && prefs.is_enabled("lrclib");
+        // Tier 1 (Top of Hierarchy): Limusic & Boidu ONLY.
+        // Any synced hit in Tier 1 wins before LyricsPlus or any other provider is queried.
+        let limusic_ok = pref_id != "limusic" && prefs.is_enabled("limusic");
+        let boidu_ok = pref_id != "boidu" && prefs.is_enabled("boidu");
+        if limusic_ok || boidu_ok {
+            let (limusic_opt, boidu_opt) = tokio::join!(
+                async {
+                    if limusic_ok {
+                        Some(
+                            self.fetch_by_id(
+                                "limusic",
+                                track_key,
+                                &derived_title,
+                                &derived_artist,
+                                &clean_title,
+                                &clean_artist,
+                                raw_album,
+                                duration_sec,
+                            )
+                            .await,
+                        )
+                    } else {
+                        None
+                    }
+                },
+                async {
+                    if boidu_ok {
+                        Some(
+                            self.fetch_by_id(
+                                "boidu",
+                                track_key,
+                                &derived_title,
+                                &derived_artist,
+                                &clean_title,
+                                &clean_artist,
+                                raw_album,
+                                duration_sec,
+                            )
+                            .await,
+                        )
+                    } else {
+                        None
+                    }
+                }
+            );
 
-        let (limusic_opt, boidu_opt, unison_opt, lp_opt, lrclib_opt) = tokio::join!(
-            async { if limusic_ok { Some(self.fetch_by_id("limusic", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
-            async { if boidu_ok { Some(self.fetch_by_id("boidu", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
-            async { if unison_ok { Some(self.fetch_by_id("unison", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
-            async { if lp_ok { Some(self.fetch_by_id("lyricsplus", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
-            async { if lrclib_ok { Some(self.fetch_by_id("lrclib", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } }
-        );
-
-        let stage_a = [
-            ("limusic", limusic_opt),
-            ("boidu", boidu_opt),
-            ("unison", unison_opt),
-            ("lyricsplus", lp_opt),
-            ("lrclib", lrclib_opt),
-        ];
-        if let Some(best) = select_stage_result(&stage_a, &mut plain_candidates) {
-            return best;
+            let tier_1 = [("limusic", limusic_opt), ("boidu", boidu_opt)];
+            if let Some(best) = select_stage_result(&tier_1, &mut plain_candidates) {
+                return best;
+            }
         }
 
-        // 3. Fallback Stage B: YouTube Music + Netease + QQ Music + Kugou
-        let ytm_ok = "ytmusic" != pref_id && prefs.is_enabled("ytmusic");
-        let netease_ok = "netease" != pref_id && prefs.is_enabled("netease");
-        let qq_ok = "qqmusic" != pref_id && prefs.is_enabled("qqmusic");
-        let kugou_ok = "kugou" != pref_id && prefs.is_enabled("kugou");
+        // Tier 2: LyricsPlus ONLY (queried only when both Limusic and Boidu had no synced match).
+        if pref_id != "lyricsplus" && prefs.is_enabled("lyricsplus") {
+            let lp_res = self
+                .fetch_by_id(
+                    "lyricsplus",
+                    track_key,
+                    &derived_title,
+                    &derived_artist,
+                    &clean_title,
+                    &clean_artist,
+                    raw_album,
+                    duration_sec,
+                )
+                .await;
+            let tier_2 = [("lyricsplus", Some(lp_res))];
+            if let Some(best) = select_stage_result(&tier_2, &mut plain_candidates) {
+                return best;
+            }
+        }
 
-        let (ytm_opt, netease_opt, qq_opt, kugou_opt) = tokio::join!(
-            async { if ytm_ok { Some(self.fetch_by_id("ytmusic", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
+        // Tier 3: Remaining providers (Unison, LRCLIB, Netease, YouTube Music, QQ Music, Kugou).
+        let unison_ok = pref_id != "unison" && prefs.is_enabled("unison");
+        let lrclib_ok = pref_id != "lrclib" && prefs.is_enabled("lrclib");
+        let netease_ok = pref_id != "netease" && prefs.is_enabled("netease");
+        let ytm_ok = pref_id != "ytmusic" && prefs.is_enabled("ytmusic");
+        let qq_ok = pref_id != "qqmusic" && prefs.is_enabled("qqmusic");
+        let kugou_ok = pref_id != "kugou" && prefs.is_enabled("kugou");
+
+        let (unison_opt, lrclib_opt, netease_opt, ytm_opt, qq_opt, kugou_opt) = tokio::join!(
+            async { if unison_ok { Some(self.fetch_by_id("unison", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
+            async { if lrclib_ok { Some(self.fetch_by_id("lrclib", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
             async { if netease_ok { Some(self.fetch_by_id("netease", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
+            async { if ytm_ok { Some(self.fetch_by_id("ytmusic", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
             async { if qq_ok { Some(self.fetch_by_id("qqmusic", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
             async { if kugou_ok { Some(self.fetch_by_id("kugou", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } }
         );
 
-        let stage_b = [
+        let tier_3 = [
+            ("unison", unison_opt),
+            ("lrclib", lrclib_opt),
             ("netease", netease_opt),
             ("ytmusic", ytm_opt),
             ("qqmusic", qq_opt),
             ("kugou", kugou_opt),
         ];
-        if let Some(best) = select_stage_result(&stage_b, &mut plain_candidates) {
+        if let Some(best) = select_stage_result(&tier_3, &mut plain_candidates) {
             return best;
         }
 
-        // 4. Plain-text fallback (preferred plain first because it was pushed first)
+        // 4. Plain-text fallback (preferred plain first, then Tier 1 -> Tier 2 -> Tier 3)
         for cand in plain_candidates {
             if cand.found {
                 return cand;
@@ -362,67 +443,101 @@ impl LyricsService {
         LyricsPayload::empty(track_key.to_string())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn query_ttml_api(
+        &self,
+        endpoint: &str,
+        provider_tag: &str,
+        track_key: &str,
+        derived_title: &str,
+        derived_artist: &str,
+        clean_title: &str,
+        clean_artist: &str,
+        album: &str,
+        duration_sec: f64,
+    ) -> Option<LyricsPayload> {
+        if clean_title.trim().is_empty() || clean_artist.trim().is_empty() {
+            return None;
+        }
+
+        let try_once = |s: &str, a: &str, al: &str, d: f64| {
+            let mut params: Vec<(&str, String)> = vec![
+                ("s", s.trim().to_string()),
+                ("a", a.trim().to_string()),
+            ];
+            if !al.trim().is_empty() {
+                params.push(("al", al.trim().to_string()));
+            }
+            if d >= 10.0 {
+                params.push(("d", format!("{}", d.round() as i64)));
+            }
+            params
+        };
+
+        let mut attempts: Vec<Vec<(&str, String)>> = Vec::with_capacity(3);
+        let has_album = !album.trim().is_empty();
+        let has_dur = duration_sec >= 10.0;
+        attempts.push(try_once(clean_title, clean_artist, album, duration_sec));
+        if has_album && has_dur {
+            attempts.push(try_once(clean_title, clean_artist, "", duration_sec));
+        }
+        if has_album || has_dur {
+            attempts.push(try_once(clean_title, clean_artist, "", 0.0));
+        }
+        if (derived_title != clean_title || derived_artist != clean_artist)
+            && !derived_title.trim().is_empty()
+            && !derived_artist.trim().is_empty()
+        {
+            attempts.push(try_once(derived_title, derived_artist, "", 0.0));
+        }
+
+        for params in attempts {
+            let Ok(resp) = self.client.get(endpoint).query(&params).send().await else {
+                continue;
+            };
+            if !resp.status().is_success() {
+                continue;
+            }
+            let Ok(parsed) = resp.json::<BoiduResponse>().await else {
+                continue;
+            };
+            let Some(ttml) = parsed.ttml.filter(|s| !s.trim().is_empty()) else {
+                continue;
+            };
+            if let Some(mut payload) = parse_ttml(track_key, &ttml, duration_sec) {
+                if provider_tag != "boidu" {
+                    payload.source = payload.source.replace("boidu:", &format!("{provider_tag}:"));
+                }
+                return Some(payload);
+            }
+        }
+        None
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn fetch_limusic(
         &self,
         track_key: &str,
-        title: &str,
-        artist: &str,
+        derived_title: &str,
+        derived_artist: &str,
+        clean_title: &str,
+        clean_artist: &str,
         album: &str,
         duration_sec: f64,
     ) -> LyricsPayload {
-        if title.trim().is_empty() || artist.trim().is_empty() {
-            return LyricsPayload::empty(track_key.to_string());
-        }
-
-        // Limusic via Boidu unified endpoint + artist/title fallback
-        let mut params: Vec<(&str, String)> = vec![
-            ("s", title.trim().to_string()),
-            ("a", artist.trim().to_string()),
-        ];
-        if !album.trim().is_empty() {
-            params.push(("al", album.trim().to_string()));
-        }
-        if duration_sec >= 1.0 {
-            params.push(("d", format!("{}", duration_sec.round() as i64)));
-        }
-
-        if let Ok(resp) = self
-            .client
-            .get("https://lyrics-api.boidu.dev/getLyrics")
-            .query(&params)
-            .send()
-            .await
-        {
-            if resp.status().is_success() {
-                if let Ok(parsed) = resp.json::<BoiduResponse>().await {
-                    if let Some(ttml) = parsed.ttml.filter(|s| !s.trim().is_empty()) {
-                        if let Some(mut payload) = parse_ttml(track_key, &ttml, duration_sec) {
-                            payload.source = payload.source.replace("boidu:", "limusic:");
-                            return payload;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Secondary Limusic resolver via YouTube videoId on Unison (crowdsourced richsync)
-        if let Some(video_id) = self.find_ytmusic_video_id(title, artist).await {
-            if let Some(mut payload) = self
-                .query_unison_endpoint(track_key, &[("v", video_id)], duration_sec)
-                .await
-            {
-                if payload.synced {
-                    payload.source = if payload.word_synced {
-                        "limusic:word".to_string()
-                    } else {
-                        "limusic:line".to_string()
-                    };
-                    return payload;
-                }
-            }
-        }
-
-        LyricsPayload::empty(track_key.to_string())
+        self.query_ttml_api(
+            "https://lyrics-api.boidu.dev/getLyrics",
+            "limusic",
+            track_key,
+            derived_title,
+            derived_artist,
+            clean_title,
+            clean_artist,
+            album,
+            duration_sec,
+        )
+        .await
+        .unwrap_or_else(|| LyricsPayload::empty(track_key.to_string()))
     }
 
     async fn fetch_unison(
@@ -568,51 +683,30 @@ impl LyricsService {
         find_first_string_for_key(&search_json, "videoId")
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn fetch_boidu(
         &self,
         track_key: &str,
-        title: &str,
-        artist: &str,
+        derived_title: &str,
+        derived_artist: &str,
+        clean_title: &str,
+        clean_artist: &str,
         album: &str,
         duration_sec: f64,
     ) -> LyricsPayload {
-        if title.trim().is_empty() || artist.trim().is_empty() {
-            return LyricsPayload::empty(track_key.to_string());
-        }
-
-        // Always send s, a, al, and d when available as recommended by Better Lyrics API docs
-        let mut params: Vec<(&str, String)> = vec![
-            ("s", title.trim().to_string()),
-            ("a", artist.trim().to_string()),
-        ];
-        if !album.trim().is_empty() {
-            params.push(("al", album.trim().to_string()));
-        }
-        if duration_sec >= 1.0 {
-            params.push(("d", format!("{}", duration_sec.round() as i64)));
-        }
-
-        let Ok(resp) = self
-            .client
-            .get("https://api.betterlyrics.org/getLyrics")
-            .query(&params)
-            .send()
-            .await
-        else {
-            return LyricsPayload::empty(track_key.to_string());
-        };
-        if !resp.status().is_success() {
-            return LyricsPayload::empty(track_key.to_string());
-        }
-        let Ok(parsed) = resp.json::<BoiduResponse>().await else {
-            return LyricsPayload::empty(track_key.to_string());
-        };
-        let Some(ttml) = parsed.ttml.filter(|s| !s.trim().is_empty()) else {
-            return LyricsPayload::empty(track_key.to_string());
-        };
-
-        parse_ttml(track_key, &ttml, duration_sec)
-            .unwrap_or_else(|| LyricsPayload::empty(track_key.to_string()))
+        self.query_ttml_api(
+            "https://api.betterlyrics.org/getLyrics",
+            "boidu",
+            track_key,
+            derived_title,
+            derived_artist,
+            clean_title,
+            clean_artist,
+            album,
+            duration_sec,
+        )
+        .await
+        .unwrap_or_else(|| LyricsPayload::empty(track_key.to_string()))
     }
 
     async fn fetch_lyricsplus(
@@ -635,6 +729,7 @@ impl LyricsService {
         let mut params: Vec<(&str, String)> = vec![
             ("title", title.to_string()),
             ("artist", artist.to_string()),
+            ("source", "apple,lyricsplus,musixmatch,spotify,deezer".to_string()),
         ];
         if !album.trim().is_empty() {
             params.push(("album", album.trim().to_string()));
@@ -1686,8 +1781,10 @@ pub fn parse_lyricsplus_json(
         let line_dur_sec = (end_sec - time_sec).max(0.35);
         let words = if is_word_type {
             if let Some(syllables) = item.syllabus.as_deref().filter(|s| !s.is_empty()) {
-                let merged = merge_lyricsplus_syllables(syllables, time_sec, line_dur_sec);
-                if !merged.is_empty() {
+                let text_word_count = text.split_whitespace().count();
+                let merged =
+                    merge_lyricsplus_syllables(syllables, time_sec, line_dur_sec, text_word_count);
+                if !merged.is_empty() && !(merged.len() <= 1 && text_word_count > 1) {
                     has_word_timings = true;
                     merged
                 } else {
@@ -1732,7 +1829,16 @@ fn merge_lyricsplus_syllables(
     syllables: &[LyricsPlusSyllabus],
     line_start_sec: f64,
     line_dur_sec: f64,
+    text_word_count: usize,
 ) -> Vec<LyricWord> {
+    let any_has_space = syllables.iter().any(|s| {
+        s.text
+            .as_deref()
+            .is_some_and(|t| t.chars().any(char::is_whitespace))
+    });
+    let each_syl_is_word =
+        !any_has_space && syllables.len() >= text_word_count && text_word_count > 1;
+
     let mut words: Vec<LyricWord> = Vec::new();
     let mut current_text = String::new();
     let mut current_start_sec: Option<f64> = None;
@@ -1770,13 +1876,27 @@ fn merge_lyricsplus_syllables(
         let syl_dur = (syl.duration.unwrap_or(150).max(40) as f64) / 1000.0;
         let syl_end = syl_start + syl_dur;
 
-        if current_start_sec.is_none() {
-            current_start_sec = Some(syl_start);
+        if (each_syl_is_word || raw_text.starts_with(char::is_whitespace)) && !current_text.is_empty()
+        {
+            flush(
+                &mut words,
+                &mut current_text,
+                &mut current_start_sec,
+                current_end_sec,
+            );
         }
-        current_text.push_str(raw_text);
-        current_end_sec = syl_end;
 
-        if raw_text.ends_with(char::is_whitespace) {
+        let trimmed_part = raw_text.trim();
+        if !trimmed_part.is_empty() {
+            if current_start_sec.is_none() {
+                current_start_sec = Some(syl_start);
+            }
+            current_text.push_str(trimmed_part);
+            current_end_sec = syl_end;
+        }
+
+        if (each_syl_is_word || raw_text.ends_with(char::is_whitespace)) && !current_text.is_empty()
+        {
             flush(
                 &mut words,
                 &mut current_text,
@@ -2558,5 +2678,13 @@ mod tests {
         assert!(select_stage_result(&[("netease", Some(netease_plain))], &mut plains_only).is_none());
         assert_eq!(plains_only.len(), 1);
         assert_eq!(plains_only[0].source, "netease:plain");
+
+        // Explicit preferred provider stays enabled even if its individual toggle is false
+        let custom_prefs = LyricProviderPrefs {
+            preferred: "lrclib".to_string(),
+            enable_lrclib: false,
+            ..LyricProviderPrefs::default()
+        };
+        assert!(custom_prefs.is_enabled("lrclib"));
     }
 }

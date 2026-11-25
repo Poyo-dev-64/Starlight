@@ -830,3 +830,156 @@ export function computeOrbitingSatellites(nowSec) {
   }
   return LEO_RESULTS;
 }
+
+const IAU_ABBR_GENITIVES = {
+  And: 'Andromedae', Ant: 'Antliae', Aps: 'Apodis', Aqr: 'Aquarii', Aql: 'Aquilae',
+  Ara: 'Arae', Ari: 'Arietis', Aur: 'Aurigae', Boo: 'Bootis', Cae: 'Caeli',
+  Cam: 'Camelopardalis', Cnc: 'Cancri', CVn: 'Canum_Venaticorum', CMa: 'Canis_Majoris',
+  CMi: 'Canis_Minoris', Cap: 'Capricorni', Car: 'Carinae', Cas: 'Cassiopeiae',
+  Cen: 'Centauri', Cep: 'Cephei', Cet: 'Ceti', Cha: 'Chamaeleontis', Cir: 'Circini',
+  Col: 'Columbae', Com: 'Comae_Berenices', CrA: 'Coronae_Australis', CrB: 'Coronae_Borealis',
+  Crv: 'Corvi', Crt: 'Crateris', Cru: 'Crucis', Cyg: 'Cygni', Del: 'Delphini',
+  Dor: 'Doradus', Dra: 'Draconis', Equ: 'Equulei', Eri: 'Eridani', For: 'Fornacis',
+  Gem: 'Geminorum', Gru: 'Gruis', Her: 'Herculis', Hor: 'Horologii', Hya: 'Hydrae',
+  Hyi: 'Hydri', Ind: 'Indi', Lac: 'Lacertae', Leo: 'Leonis', LMi: 'Leonis_Minoris',
+  Lep: 'Leporis', Lib: 'Librae', Lup: 'Lupi', Lyn: 'Lyncis', Lyr: 'Lyrae',
+  Men: 'Mensae', Mic: 'Microscopii', Mon: 'Monocerotis', Mus: 'Muscae', Nor: 'Normae',
+  Oct: 'Octantis', Oph: 'Ophiuchi', Ori: 'Orionis', Pav: 'Pavonis', Peg: 'Pegasi',
+  Per: 'Persei', Phe: 'Phoenicis', Pic: 'Pictoris', Psc: 'Piscium', PsA: 'Piscis_Austrini',
+  Pup: 'Puppis', Pyx: 'Pyxidis', Ret: 'Reticuli', Sge: 'Sagittae', Sgr: 'Sagittarii',
+  Sco: 'Scorpii', Scl: 'Sculptoris', Sct: 'Scuti', Ser: 'Serpentis', Sex: 'Sextantis',
+  Tau: 'Tauri', Tel: 'Telescopii', Tri: 'Trianguli', TrA: 'Trianguli_Australis',
+  Tuc: 'Tucanae', UMa: 'Ursae_Majoris', UMi: 'Ursae_Minoris', Vel: 'Velorum',
+  Vir: 'Virginis', Vol: 'Volantis', Vul: 'Vulpeculae',
+};
+
+const STAR_WIKI_OVERRIDES = {
+  'CYGNUS:Gienah': 'Epsilon_Cygni',
+  'CORVUS:Gienah': 'Gamma_Corvi',
+  'PHOENIX:Alpha/Zeta': 'Ankaa',
+  'Asellus Bor': 'Gamma_Cancri',
+  'Asellus Aus': 'Delta_Cancri',
+  'Garnet Star': 'Mu_Cephei',
+  'Rigil Kent': 'Alpha_Centauri',
+  'The Persian': 'Alpha_Indi',
+  Mimosa: 'Mimosa_(star)',
+  Peacock: 'Peacock_(star)',
+  Diadem: 'Alpha_Comae_Berenices',
+  Chara: 'Beta_Canum_Venaticorum',
+  Ran: 'Epsilon_Eridani',
+  Anser: 'Alpha_Vulpeculae',
+  Praecipua: '46_Leonis_Minoris',
+  Ashlesha: 'Epsilon_Hydrae',
+  Algedi: 'Alpha_Capricorni',
+  Sarin: 'Delta_Herculis',
+  Atik: 'Omicron_Persei',
+  Matar: 'Eta_Pegasi',
+  Ancha: 'Theta_Aquarii',
+  Skat: 'Delta_Aquarii',
+  Albali: 'Epsilon_Aquarii',
+  Mahasim: 'Theta_Aurigae',
+  Hassaleh: 'Iota_Aurigae',
+  Almaaz: 'Epsilon_Aurigae',
+  Kraz: 'Beta_Corvi',
+  Minkar: 'Epsilon_Corvi',
+  Alchiba: 'Alpha_Corvi',
+  Alkes: 'Alpha_Crateris',
+  Dalim: 'Alpha_Fornacis',
+  Tiaki: 'Beta_Gruis',
+  'Al Dhanab': 'Gamma_Gruis',
+  Tureis: 'Rho_Puppis',
+  Regor: 'Gamma_Velorum',
+  Suhail: 'Lambda_Velorum',
+  Alya: 'Theta_Serpentis',
+  Mothallah: 'Alpha_Trianguli',
+  Atria: 'Alpha_Trianguli_Australis',
+  Ginan: 'Epsilon_Crucis',
+  Imai: 'Delta_Crucis',
+  Syrma: 'Iota_Virginis',
+  Heze: 'Zeta_Virginis',
+  Auva: 'Delta_Virginis',
+  Tarf: 'Beta_Cancri',
+  Brachium: 'Sigma_Librae',
+  Yildun: 'Delta_Ursae_Minoris',
+  'Deneb Okab': 'Zeta_Aquilae',
+  'Deneb Dulfim': 'Epsilon_Delphini',
+  Sadaltager: 'Zeta_Aquarii',
+  'Fum al Samakah': 'Beta_Piscium',
+};
+
+const DSO_WIKI_OVERRIDES = {
+  M13: 'Messier_13',
+  M81: 'Messier_81',
+};
+
+const OBJECT_WIKI_OVERRIDES = {
+  moon: 'Moon',
+  mercury: 'Mercury_(planet)',
+  venus: 'Venus',
+  mars: 'Mars',
+  jupiter: 'Jupiter',
+  saturn: 'Saturn',
+  uranus: 'Uranus',
+  neptune: 'Neptune',
+  'VGR-1': 'Voyager_1',
+  'VGR-2': 'Voyager_2',
+  NH: 'New_Horizons',
+  'PIO-10': 'Pioneer_10',
+  'PIO-11': 'Pioneer_11',
+  JWST: 'James_Webb_Space_Telescope',
+  ISS: 'International_Space_Station',
+  HST: 'Hubble_Space_Telescope',
+};
+
+function toWikiTitleCase(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ''))
+    .join('_');
+}
+
+export function resolveConstellationWikiUrl(constellationName) {
+  const clean = String(constellationName || '').trim();
+  if (!clean) return 'https://en.wikipedia.org/wiki/IAU_designated_constellations';
+  const slug = toWikiTitleCase(clean);
+  // Multi-word IAU constellations have unambiguous primary titles; single-word ones use _(constellation)
+  const fullSlug = clean.includes(' ') ? slug : `${slug}_(constellation)`;
+  return `https://en.wikipedia.org/wiki/${encodeURIComponent(fullSlug).replace(/%28/g, '(').replace(/%29/g, ')')}`;
+}
+
+export function resolveStarWikiUrl(starName, constellationName) {
+  const sName = String(starName || '').trim();
+  if (!sName) {
+    return resolveConstellationWikiUrl(constellationName);
+  }
+  const cKey = `${String(constellationName || '').trim().toUpperCase()}:${sName}`;
+  const override = STAR_WIKI_OVERRIDES[cKey] || STAR_WIKI_OVERRIDES[sName];
+  if (override) {
+    return `https://en.wikipedia.org/wiki/${override}`;
+  }
+
+  // Expand Bayer / Flamsteed / variable designations like "Gamma Cas", "41 Ari", "CS Cam", "Gamma2 Nor"
+  const bayerMatch = /^([A-Za-z0-9]+)\s+([A-Z][a-zA-Z]{2})$/.exec(sName);
+  if (bayerMatch && IAU_ABBR_GENITIVES[bayerMatch[2]]) {
+    const slug = `${bayerMatch[1]}_${IAU_ABBR_GENITIVES[bayerMatch[2]]}`;
+    return `https://en.wikipedia.org/wiki/${encodeURIComponent(slug)}`;
+  }
+
+  const slug = sName.replace(/\s+/g, '_');
+  return `https://en.wikipedia.org/wiki/${encodeURIComponent(slug).replace(/%28/g, '(').replace(/%29/g, ')')}`;
+}
+
+export function resolveDeepSkyWikiUrl(dso) {
+  if (!dso) return 'https://en.wikipedia.org/wiki/Messier_object';
+  const override = DSO_WIKI_OVERRIDES[dso.id];
+  const slug = override || String(dso.name || dso.id).trim().replace(/\s+/g, '_');
+  return `https://en.wikipedia.org/wiki/${encodeURIComponent(slug)}`;
+}
+
+export function resolveObjectWikiUrl(idOrName) {
+  const key = String(idOrName || '').trim();
+  const slug = OBJECT_WIKI_OVERRIDES[key] || key.replace(/\s+/g, '_');
+  return `https://en.wikipedia.org/wiki/${encodeURIComponent(slug).replace(/%28/g, '(').replace(/%29/g, ')')}`;
+}
