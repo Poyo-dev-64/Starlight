@@ -2969,6 +2969,9 @@ starLabel: buildRgbaLut(theme.starLabelRgb[0], theme.starLabelRgb[1], theme.star
 return theme._luts;
 }
 const CONSTELLATION_ANGULAR_RADIUS = 0.29; // ~16.6 deg half-width on the real celestial sphere
+const EQUATOR_DASH = [5, 7];
+const NO_DASH = [];
+const EQUATOR_SEGMENTS = 144;
 class StarVisualizer {
 constructor(canvas) {
 this.canvas = canvas;
@@ -2994,6 +2997,7 @@ fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
 fontStyle: 'normal',
 showDeepSky: true,
 showSatellites: true,
+showEquator: true,
 instrumentalMode: true,
 hoverInspector: true,
 proportionalSizes: false,
@@ -3011,7 +3015,9 @@ this.dragVelocity = { x: 0, y: 0 };
 this.rotMat = new Float64Array(9);
 this._qBreathZ = [0, 0, 0, 1];
 this._qBreathX = [0, 0, 0, 1];
+this._qBreathY = [0, 0, 0, 1];
 this._qTemp = [0, 0, 0, 1];
+this._qTemp2 = [0, 0, 0, 1];
 this._qRender = [0, 0, 0, 1];
 this.skyConstellations = this._buildSkyConstellations();
 this.skyDeepSky = DEEP_SKY_OBJECTS.map((obj) => ({
@@ -3034,6 +3040,7 @@ this.solarSystem = computeLiveSolarSystem(nowDate);
 this.spacecraft = computeSpacecraft(nowDate, this.solarSystem);
 this.lastEphemerisAt = typeof performance !== 'undefined' ? performance.now() / 1000 : 0;
 this._initSphereStars(320, 120);
+this._initCelestialEquator();
 this.bgBuckets = Array.from({ length: BG_BUCKET_COUNT }, () => new Float32Array(450 * 3));
 this.bgBucketCounts = new Int32Array(BG_BUCKET_COUNT);
 this.ambLineSegs = [
@@ -3045,7 +3052,15 @@ this.ambLineCounts = new Int32Array(3);
 this.shootingStars = [];
 this.nextShootingStarAt = 3.5;
 this.lastBeatShootingStarAt = 0;
-this.audioEnergy = { bass: 0, mid: 0, treble: 0, rms: 0, beat: 0 };
+this.audioEnergy = { bass: 0, mid: 0, treble: 0, rms: 0, beat: 0, kick: 0, instrumental: 0 };
+this.ambientMotionEnv = 0.35;
+this.kickBobY = 0;
+this.kickBobVel = 0;
+this.kickZoomPulse = 0;
+this.prevKickRaw = 0;
+this.lastKickRippleAt = 0;
+this.lastCx = 0;
+this.lastCy = 0;
 this.heroIndex = 0;
 this.qCamera = [...this.skyConstellations[0].qTarget];
 this.transition = null;
@@ -3542,26 +3557,55 @@ const ctx = this.ctx;
 if (!ctx) return;
 const w = this.width;
 const h = this.height;
-const cx = w * 0.5;
-const cy = h * 0.48;
-const minDim = w < h ? w : h;
-const targetZoom = clamp(this.settings.zoom ?? 1.0, 0.45, 2.4);
-this.currentZoom += (targetZoom - this.currentZoom) * expSmoothing(dt, 10);
-const domeRadius = ((minDim * 0.30) / CONSTELLATION_ANGULAR_RADIUS) * this.currentZoom;
-this.lastDomeRadius = domeRadius;
+const simDt = dt < 0.05 ? dt : 0.05;
 ctx.fillStyle = this.theme.bg;
 ctx.fillRect(0, 0, w, h);
 this.bottomClearY = frameState.bottomClearY;
 const react = clamp(this.settings.audioReactivity ?? 1.0, 0, 2);
-const rawAudio = frameState.audio || { bass: 0, mid: 0, treble: 0, rms: 0, beat: 0 };
+const rawAudio = frameState.audio || { bass: 0, mid: 0, treble: 0, rms: 0, beat: 0, kick: 0, instrumental: 0 };
 const aLerp = expSmoothing(dt, 18);
 this.audioEnergy.bass += (rawAudio.bass * react - this.audioEnergy.bass) * aLerp;
 this.audioEnergy.mid += (rawAudio.mid * react - this.audioEnergy.mid) * aLerp;
 this.audioEnergy.treble += (rawAudio.treble * react - this.audioEnergy.treble) * aLerp;
 this.audioEnergy.rms += (rawAudio.rms * react - this.audioEnergy.rms) * aLerp;
 this.audioEnergy.beat += (rawAudio.beat * react - this.audioEnergy.beat) * expSmoothing(dt, 24);
+const kickTarget = (rawAudio.kick !== undefined ? rawAudio.kick : rawAudio.beat) * react;
+const instTarget =
+(rawAudio.instrumental !== undefined
+? rawAudio.instrumental
+: rawAudio.mid * 0.5 + rawAudio.bass * 0.3) * react;
+const kickLerp = expSmoothing(dt, kickTarget > this.audioEnergy.kick ? 42 : 11);
+const instLerp = expSmoothing(dt, instTarget > this.audioEnergy.instrumental ? 22 : 8);
+this.audioEnergy.kick += (kickTarget - this.audioEnergy.kick) * kickLerp;
+this.audioEnergy.instrumental += (instTarget - this.audioEnergy.instrumental) * instLerp;
+const clampedKick = clamp(kickTarget, 0, 1.4);
+const kickImpulse = clamp(clampedKick - this.prevKickRaw, 0, 1);
+this.prevKickRaw = this.prevKickRaw * 0.45 + clampedKick * 0.55;
+if (kickImpulse > 0.14 && !this.isDragging) {
+this.kickBobVel += kickImpulse * 42;
+this.kickZoomPulse = Math.max(this.kickZoomPulse, kickImpulse * 0.85);
+}
+this.kickBobVel += (-72 * this.kickBobY - 15 * this.kickBobVel) * simDt;
+this.kickBobY = clamp(this.kickBobY + this.kickBobVel * simDt, -10, 14);
+this.kickZoomPulse *= Math.exp(-dt * 7.5);
+const targetMotionEnv = this.isDragging ? 0 : (frameState.isPlaying ? 1.0 : 0.48);
+this.ambientMotionEnv += (targetMotionEnv - this.ambientMotionEnv) * expSmoothing(dt, 3.2);
+const bobX = (Math.sin(nowSec * 0.37) * 5.5 + Math.cos(nowSec * 0.23) * 3.0) * this.ambientMotionEnv;
+const bobY = (Math.cos(nowSec * 0.43) * 6.5 + Math.sin(nowSec * 0.19) * 3.5) * this.ambientMotionEnv + this.kickBobY;
+const cx = w * 0.5 + bobX;
+const cy = h * 0.48 + bobY;
+this.lastCx = cx;
+this.lastCy = cy;
+const minDim = w < h ? w : h;
+const targetZoom = clamp(this.settings.zoom ?? 1.0, 0.45, 2.4);
+this.currentZoom += (targetZoom - this.currentZoom) * expSmoothing(dt, 10);
+const domeRadius =
+((minDim * 0.30) / CONSTELLATION_ANGULAR_RADIUS) *
+this.currentZoom *
+(1 + this.kickZoomPulse * 0.014);
+this.lastDomeRadius = domeRadius;
 if (
-this.audioEnergy.beat > 0.65 &&
+Math.max(this.audioEnergy.kick, this.audioEnergy.beat * 0.85) > 0.65 &&
 nowSec - this.lastBeatShootingStarAt > 3.2 &&
 this.settings.effectsIntensity > 0.2
 ) {
@@ -3592,17 +3636,27 @@ this.dragVelocity.x = 0;
 this.dragVelocity.y = 0;
 }
 }
-const breathAmt = this.isDragging ? 0 : (frameState.isPlaying ? 0.018 : 0.007);
-const halfZ = Math.sin(nowSec * 0.21) * breathAmt * 0.5;
-const halfX = Math.cos(nowSec * 0.16) * (breathAmt * 0.6) * 0.5;
+const inst = clamp(this.audioEnergy.instrumental, 0, 1.3);
+const driftScale = this.ambientMotionEnv * (1 + inst * 0.35);
+const halfZ = (Math.sin(nowSec * 0.21) * 0.014 + Math.sin(nowSec * 0.09) * 0.008) * driftScale * 0.5;
+const halfX = (Math.cos(nowSec * 0.16) * 0.010 + Math.sin(nowSec * 0.27) * 0.005) * driftScale * 0.5;
+const halfY = (Math.sin(nowSec * 0.13) * 0.011 + Math.cos(nowSec * 0.31) * 0.004) * driftScale * 0.5;
 this._qBreathZ[2] = Math.sin(halfZ);
 this._qBreathZ[3] = Math.cos(halfZ);
 this._qBreathX[0] = Math.sin(halfX);
 this._qBreathX[3] = Math.cos(halfX);
+this._qBreathY[1] = Math.sin(halfY);
+this._qBreathY[3] = Math.cos(halfY);
 quatMulInto(this._qTemp, this._qBreathZ, this._qBreathX);
-quatMulInto(this._qRender, this._qTemp, this.qCamera);
+quatMulInto(this._qTemp2, this._qTemp, this._qBreathY);
+quatMulInto(this._qRender, this._qTemp2, this.qCamera);
 const m = quatToMat3(this._qRender, this.rotMat);
-this._drawSphereBackgroundStars(ctx, nowSec, cx, cy, domeRadius, m);
+const bgCx = w * 0.5 + bobX * 0.62;
+const bgCy = h * 0.48 + bobY * 0.62;
+this._drawSphereBackgroundStars(ctx, nowSec, bgCx, bgCy, domeRadius, m);
+if (this.settings.showEquator) {
+this._drawCelestialEquator(ctx, m, cx, cy, domeRadius);
+}
 if (this.settings.showDeepSky) {
 this._drawDeepSkyObjects(ctx, m, cx, cy, domeRadius, nowSec);
 }
@@ -3695,10 +3749,40 @@ this.slowFrames = 0;
 this.fastFrames = 0;
 }
 }
+_initCelestialEquator() {
+this.equatorDirs = new Float32Array(EQUATOR_SEGMENTS * 3);
+for (let i = 0; i < EQUATOR_SEGMENTS; i++) {
+const ra = (i / EQUATOR_SEGMENTS) * Math.PI * 2;
+const o = i * 3;
+this.equatorDirs[o] = Math.cos(ra);
+this.equatorDirs[o + 1] = Math.sin(ra);
+this.equatorDirs[o + 2] = 0;
+}
+this.equatorTicks = new Float32Array(24 * 6);
+this.equatorLabels = [];
+for (let h = 0; h < 24; h++) {
+const decSpan = h % 6 === 0 ? 1.35 : 0.9;
+const a = raDecToVec3(h, -decSpan);
+const b = raDecToVec3(h, decSpan);
+const o = h * 6;
+this.equatorTicks[o] = a[0];
+this.equatorTicks[o + 1] = a[1];
+this.equatorTicks[o + 2] = a[2];
+this.equatorTicks[o + 3] = b[0];
+this.equatorTicks[o + 4] = b[1];
+this.equatorTicks[o + 5] = b[2];
+if (h % 2 === 0) {
+this.equatorLabels.push({
+text: `${h}h`,
+dir: raDecToVec3(h, 2.1),
+});
+}
+}
+}
 _drawSphereBackgroundStars(ctx, nowSec, cx, cy, domeRadius, m) {
 const bright = this.settings.starBrightness;
-const trebleBoost = 1 + clamp(this.audioEnergy.treble * 0.45, 0, 0.7);
-const bassBoost = 1 + clamp(this.audioEnergy.bass * 0.18, 0, 0.35);
+const trebleBoost = 1 + clamp(this.audioEnergy.instrumental * 0.32 + this.audioEnergy.treble * 0.22, 0, 0.72);
+const bassBoost = 1 + clamp(this.audioEnergy.kick * 0.28 + this.audioEnergy.bass * 0.08, 0, 0.42);
 const alphaMult = (0.55 + bright * 0.42) * trebleBoost;
 const sizeMult = (0.85 + bright * 0.15) * bassBoost;
 const m00 = m[0], m01 = m[1], m02 = m[2];
@@ -3875,7 +3959,12 @@ labelsToDraw.push({ name: cObj.name, x: avgX, y: avgY + 24, alpha: clamp(0.14 * 
 }
 }
 }
-const bandAlphas = [0.022 * lineMult, 0.052 * lineMult, 0.086 * lineMult];
+const ambPulse = 1 + clamp(this.audioEnergy.instrumental * 0.28 + this.audioEnergy.kick * 0.14, 0, 0.45);
+const bandAlphas = [
+0.022 * lineMult * ambPulse,
+0.052 * lineMult * ambPulse,
+0.086 * lineMult * ambPulse,
+];
 const ambLineLut = this.themeLuts.ambLine;
 ctx.lineWidth = 0.85;
 for (let b = 0; b < 3; b++) {
@@ -4349,6 +4438,113 @@ best = t;
 this.hoveredTarget = best;
 return best;
 }
+_drawCelestialEquator(ctx, m, cx, cy, domeRadius) {
+const dirs = this.equatorDirs;
+const ticks = this.equatorTicks;
+if (!dirs || !ticks) return;
+const lineMult = this.settings.lineOpacity;
+const luts = this.themeLuts;
+const m00 = m[0], m01 = m[1], m02 = m[2];
+const m10 = m[3], m11 = m[4], m12 = m[5];
+const m20 = m[6], m21 = m[7], m22 = m[8];
+const maxJumpX = this.width * 0.7;
+const maxJumpY = this.height * 0.7;
+let drawing = false;
+let prevSx = 0;
+let prevSy = 0;
+let firstVisible = false;
+let firstSx = 0;
+let firstSy = 0;
+ctx.strokeStyle = luts.heroLine[alphaIdx(clamp(0.16 * lineMult, 0.05, 0.34))];
+ctx.lineWidth = 1.05;
+ctx.setLineDash(EQUATOR_DASH);
+ctx.beginPath();
+for (let i = 0; i < EQUATOR_SEGMENTS; i++) {
+const o = i * 3;
+const dx = dirs[o], dy = dirs[o + 1], dz = dirs[o + 2];
+const vz = m20 * dx + m21 * dy + m22 * dz;
+if (vz <= 0.04) {
+drawing = false;
+continue;
+}
+const k = domeRadius / (1 + (vz < 1.22 ? (1 - vz) * 0.28 : -0.0616));
+const sx = cx + (m00 * dx + m01 * dy + m02 * dz) * k;
+const sy = cy + (m10 * dx + m11 * dy + m12 * dz) * k;
+if (i === 0) {
+firstVisible = true;
+firstSx = sx;
+firstSy = sy;
+}
+if (!drawing || Math.abs(sx - prevSx) > maxJumpX || Math.abs(sy - prevSy) > maxJumpY) {
+ctx.moveTo(sx, sy);
+drawing = true;
+} else {
+ctx.lineTo(sx, sy);
+}
+prevSx = sx;
+prevSy = sy;
+}
+if (drawing && firstVisible && Math.abs(firstSx - prevSx) <= maxJumpX && Math.abs(firstSy - prevSy) <= maxJumpY) {
+ctx.lineTo(firstSx, firstSy);
+}
+ctx.stroke();
+ctx.setLineDash(NO_DASH);
+ctx.strokeStyle = luts.heroLine[alphaIdx(clamp(0.24 * lineMult, 0.08, 0.45))];
+ctx.lineWidth = 1.0;
+ctx.beginPath();
+for (let h = 0; h < 24; h++) {
+const o = h * 6;
+const ax = ticks[o], ay = ticks[o + 1], az = ticks[o + 2];
+const bx = ticks[o + 3], by = ticks[o + 4], bz = ticks[o + 5];
+const vza = m20 * ax + m21 * ay + m22 * az;
+const vzb = m20 * bx + m21 * by + m22 * bz;
+if (vza <= 0.06 || vzb <= 0.06) continue;
+const ka = domeRadius / (1 + (vza < 1.22 ? (1 - vza) * 0.28 : -0.0616));
+const kb = domeRadius / (1 + (vzb < 1.22 ? (1 - vzb) * 0.28 : -0.0616));
+ctx.moveTo(cx + (m00 * ax + m01 * ay + m02 * az) * ka, cy + (m10 * ax + m11 * ay + m12 * az) * ka);
+ctx.lineTo(cx + (m00 * bx + m01 * by + m02 * bz) * kb, cy + (m10 * bx + m11 * by + m12 * bz) * kb);
+}
+ctx.stroke();
+if (this.showLabels) {
+const labelColor = this.theme.ambLabelHex || this.theme.brand;
+const margin = 40;
+const maxX = this.width - margin;
+const maxY = this.bottomClearY > 80 ? this.bottomClearY - 24 : this.height - margin;
+let bestZ = 0.35;
+let bestLx = 0;
+let bestLy = 0;
+for (let i = 0; i < this.equatorLabels.length; i++) {
+const lbl = this.equatorLabels[i];
+const d = lbl.dir;
+const vz = m20 * d[0] + m21 * d[1] + m22 * d[2];
+if (vz <= 0.22) continue;
+const k = domeRadius / (1 + (vz < 1.22 ? (1 - vz) * 0.28 : -0.0616));
+const lx = cx + (m00 * d[0] + m01 * d[1] + m02 * d[2]) * k;
+const ly = cy + (m10 * d[0] + m11 * d[1] + m12 * d[2]) * k;
+if (lx > margin && lx < maxX && ly > margin && ly < maxY) {
+this._drawMiniLabel(ctx, lbl.text, 8.5, 500, labelColor, lx, ly, clamp(0.32 * vz * lineMult, 0.1, 0.42), true);
+if (vz > bestZ) {
+bestZ = vz;
+bestLx = lx;
+bestLy = ly;
+}
+}
+}
+if (bestLx > 0) {
+this._drawMiniLabel(
+ctx,
+'CELESTIAL EQUATOR',
+8.5,
+600,
+labelColor,
+bestLx,
+bestLy - 13,
+clamp(0.34 * bestZ * lineMult, 0.12, 0.45),
+true
+);
+}
+}
+}
 pickCelestialAt(x, y) {
 if (x < 0 || y < 0) return null;
 if (this.hitTargets.length > 0) {
@@ -4375,8 +4571,8 @@ const m = this.rotMat;
 const m00 = m[0], m01 = m[1], m02 = m[2];
 const m10 = m[3], m11 = m[4], m12 = m[5];
 const m20 = m[6], m21 = m[7], m22 = m[8];
-const cx = this.width * 0.5;
-const cy = this.height * 0.48;
+const cx = this.lastCx || this.width * 0.5;
+const cy = this.lastCy || this.height * 0.48;
 const domeRadius = this.lastDomeRadius || 400;
 const activeIdx = this.transition ? this.transition.toIndex : this.heroIndex;
 let best = null;
@@ -4823,7 +5019,11 @@ this.isInstrumentalActive = true;
 this._releaseCurrentLyricBubbles();
 const seq = hero.sequence && hero.sequence.length ? hero.sequence : null;
 const seqLen = seq ? seq.length : hero.stars.length;
-const energy = Math.max(this.audioEnergy.beat, this.audioEnergy.bass * 0.85, this.audioEnergy.mid * 0.75);
+const energy = Math.max(
+this.audioEnergy.kick,
+this.audioEnergy.instrumental * 0.92,
+this.audioEnergy.beat * 0.72
+);
 const elapsedSincePulse = nowSec - this.lastInstrumentalPulseSec;
 if ((energy > 0.34 && elapsedSincePulse > 0.38) || elapsedSincePulse > 1.35) {
 this.lastInstrumentalPulseSec = nowSec;
@@ -4876,11 +5076,12 @@ const bright = this.settings.starBrightness;
 const fx = this.settings.effectsIntensity;
 const lineMult = this.settings.lineOpacity;
 const bass = clamp(this.audioEnergy.bass, 0, 1.4);
-const mid = clamp(this.audioEnergy.mid, 0, 1.4);
+const kick = clamp(this.audioEnergy.kick, 0, 1.3);
+const inst = clamp(this.audioEnergy.instrumental, 0, 1.3);
 const beat = clamp(this.audioEnergy.beat, 0, 1.2);
 const luts = this.themeLuts;
-ctx.strokeStyle = luts.heroLine[alphaIdx(clamp(0.18 + mid * 0.12, 0.1, 0.5) * fadeIn * lineMult)];
-ctx.lineWidth = 1.1 + mid * 0.45;
+ctx.strokeStyle = luts.heroLine[alphaIdx(clamp(0.18 + inst * 0.18 + kick * 0.08, 0.1, 0.55) * fadeIn * lineMult)];
+ctx.lineWidth = 1.1 + inst * 0.55;
 ctx.beginPath();
 for (let e = 0; e < edgesFlat.length; e += 2) {
 const sa = proj[edgesFlat[e]];
@@ -4900,7 +5101,7 @@ const ga = this.starGlow[a];
 const gb = this.starGlow[b];
 const maxG = ga > gb ? ga : gb;
 const minG = ga < gb ? ga : gb;
-const edgeGlow = maxG * 0.72 + minG * 0.28 + mid * 0.22;
+const edgeGlow = maxG * 0.72 + minG * 0.28 + inst * 0.28 + kick * 0.10;
 if (edgeGlow > 0.03) {
 const coreWidth = 1.45 + edgeGlow * (1.7 + fx * 0.6);
 if (edgeGlow > 0.14 && fx > 0.1) {
@@ -4911,8 +5112,8 @@ ctx.moveTo(sa.sx, sa.sy);
 ctx.lineTo(sb.sx, sb.sy);
 ctx.stroke();
 }
-const aAlpha = clamp((0.18 + ga * 0.75 + mid * 0.16) * fadeIn * lineMult, 0, 0.98);
-const bAlpha = clamp((0.18 + gb * 0.75 + mid * 0.16) * fadeIn * lineMult, 0, 0.98);
+const aAlpha = clamp((0.18 + ga * 0.75 + inst * 0.20) * fadeIn * lineMult, 0, 0.98);
+const bAlpha = clamp((0.18 + gb * 0.75 + inst * 0.20) * fadeIn * lineMult, 0, 0.98);
 if (Math.abs(aAlpha - bAlpha) < 0.08) {
 ctx.strokeStyle = luts.heroGlow[alphaIdx((aAlpha + bAlpha) * 0.5)];
 } else {
@@ -4932,22 +5133,43 @@ const activeStarIdx =
 frameState.hasSyncedLyrics && frameState.activeWordIndex >= 0
 ? hero.sequence[frameState.activeWordIndex % hero.sequence.length]
 : -1;
+if (
+kick > 0.72 &&
+nowSec - this.lastKickRippleAt >= 0.26 &&
+fx > 0.2 &&
+this.ripples.length < 28 &&
+proj.length > 0
+) {
+const rippleStar = activeStarIdx >= 0 ? proj[activeStarIdx] : proj[0];
+if (rippleStar && rippleStar.z > 0.05) {
+this.lastKickRippleAt = nowSec;
+this.ripples.push({
+x: rippleStar.sx,
+y: rippleStar.sy,
+radius: 4,
+maxRadius: 34 * (0.7 + fx * 0.35),
+alpha: 0.42 * Math.min(1.1, fx) * fadeIn,
+speed: 74,
+color: rippleStar.renderColor || this.theme.brand,
+});
+}
+}
 for (let i = 0; i < proj.length; i++) {
 const s = proj[i];
 if (s.z <= 0.01) continue;
 const sCol = s.renderColor;
 const starLimb = clamp((s.z - 0.01) * 2.5, 0, 1);
-const glow = clamp((this.starGlow[i] || 0) + bass * 0.22 + beat * 0.12, 0, 1.35);
+const glow = clamp((this.starGlow[i] || 0) + kick * 0.34 + inst * 0.20 + beat * 0.08, 0, 1.45);
 const isActiveStar = i === activeStarIdx;
 const twinkle = 0.85 + 0.15 * Math.sin(nowSec * 2.6 + i * 1.9);
-const baseR = this._computeStarRadius(s.mag, true, bright) * (1 + bass * 0.24);
+const baseR = this._computeStarRadius(s.mag, true, bright) * (1 + kick * 0.28 + bass * 0.08);
 const starR = baseR * (1 + glow * (0.95 + fx * 0.25)) * fadeIn * starLimb;
-const haloR = starR * (4.4 + glow * (6.2 + fx * 2.5) + beat * 1.8);
+const haloR = starR * (4.4 + glow * (6.2 + fx * 2.5) + kick * 2.4 + beat * 0.8);
 const bloomAlpha = clamp((0.26 + glow * 0.72) * fadeIn * twinkle * (0.65 + bright * 0.35), 0, 0.98);
 this._drawStarSprite(ctx, s.sx, s.sy, haloR, sCol, bloomAlpha);
 if (glow > 0.1 || s.mag < 1.4) {
 const spikeStrength = Math.max(glow, s.mag < 1.4 ? 0.38 : 0) * fadeIn * clamp(0.45 + fx * 0.65, 0.25, 1.5);
-const spikeLen = starR * (3.8 + glow * (5.6 + fx * 1.8));
+const spikeLen = starR * (3.8 + glow * (5.6 + fx * 1.8) + kick * 1.6);
 ctx.strokeStyle = WHITE_RGBA[alphaIdx(clamp(0.88 * spikeStrength, 0, 0.95))];
 ctx.lineWidth = isActiveStar ? 1.6 : 1.0;
 ctx.beginPath();
@@ -5296,6 +5518,39 @@ return fastHexRgba(hex, alpha);
 }
 const __MATH_DEBUG__ = { rotateVecByQuat, quatSlerp, quatToMat3 };
 // === we-lyrics.js ===
+const DEFAULT_LYRIC_HIERARCHY = [
+{ id: 'limusic', tier: 1 },
+{ id: 'boidu', tier: 1 },
+{ id: 'lyricsplus', tier: 2 },
+{ id: 'unison', tier: 3 },
+{ id: 'lrclib', tier: 3 },
+{ id: 'netease', tier: 3 },
+{ id: 'ytmusic', tier: 3 },
+{ id: 'qqmusic', tier: 3 },
+{ id: 'kugou', tier: 3 },
+];
+const DEFAULT_TIER_BY_ID = Object.fromEntries(DEFAULT_LYRIC_HIERARCHY.map((e) => [e.id, e.tier]));
+function normalizeLyricHierarchy(raw) {
+const seen = new Set();
+const list = [];
+if (Array.isArray(raw)) {
+for (const item of raw) {
+const id = typeof item?.id === 'string' ? item.id.trim() : '';
+if (!id || !(id in DEFAULT_TIER_BY_ID) || seen.has(id)) continue;
+seen.add(id);
+const t = Number(item.tier);
+const tier = Number.isFinite(t) ? Math.max(1, Math.min(3, Math.round(t))) : DEFAULT_TIER_BY_ID[id];
+list.push({ id, tier });
+}
+}
+for (const def of DEFAULT_LYRIC_HIERARCHY) {
+if (!seen.has(def.id)) {
+list.push({ id: def.id, tier: def.tier });
+}
+}
+list.sort((a, b) => a.tier - b.tier);
+return list;
+}
 function splitWordsTimed(text) {
 const tokens = String(text || '').trim().split(/\s+/).filter(Boolean);
 if (tokens.length === 0) return [];
@@ -5885,30 +6140,21 @@ return text ? parseLrcLyrics(trackKey, text, durationSec, 'kugou:synced') : null
 }
 return null;
 };
+const hierarchy = normalizeLyricHierarchy(prefs.hierarchy);
 const plainCandidates = [];
 if (preferred !== 'auto' && isEnabled[preferred]) {
 const prefRes = await fetchProvider(preferred);
 if (prefRes?.synced) return prefRes;
 if (prefRes?.found) plainCandidates.push(prefRes);
 }
-const tier1Ids = ['limusic', 'boidu'].filter((id) => id !== preferred && isEnabled[id]);
-if (tier1Ids.length > 0) {
-const res1 = await Promise.all(tier1Ids.map((id) => fetchProvider(id)));
-const best1 = selectStageResult(res1, plainCandidates);
-if (best1) return best1;
-}
-if (preferred !== 'lyricsplus' && isEnabled.lyricsplus) {
-const res2 = await fetchProvider('lyricsplus');
-const best2 = selectStageResult([res2], plainCandidates);
-if (best2) return best2;
-}
-const tier3Ids = ['unison', 'lrclib', 'netease', 'ytmusic', 'qqmusic', 'kugou'].filter(
-(id) => id !== preferred && isEnabled[id]
-);
-if (tier3Ids.length > 0) {
-const res3 = await Promise.all(tier3Ids.map((id) => fetchProvider(id)));
-const best3 = selectStageResult(res3, plainCandidates);
-if (best3) return best3;
+for (let tier = 1; tier <= 3; tier++) {
+const tierIds = hierarchy
+.filter((entry) => entry.tier === tier && entry.id !== preferred && isEnabled[entry.id])
+.map((entry) => entry.id);
+if (tierIds.length === 0) continue;
+const res = await Promise.all(tierIds.map((id) => fetchProvider(id)));
+const best = selectStageResult(res, plainCandidates);
+if (best) return best;
 }
 return plainCandidates[0] || empty;
 }
@@ -6003,6 +6249,7 @@ showFactCard: true,
 showBottomLine: false,
 showDeepSky: true,
 showSatellites: true,
+showEquator: true,
 instrumentalMode: true,
 hoverInspector: true,
 proportionalSizes: false,
@@ -6018,6 +6265,7 @@ enableYtmusic: true,
 enableNetease: true,
 enableQqmusic: true,
 enableKugou: true,
+lyricHierarchy: DEFAULT_LYRIC_HIERARCHY.map((e) => ({ ...e })),
 alwaysOnTop: false,
 fontPreset: 'system',
 customFontName: '',
@@ -6092,21 +6340,26 @@ const optFactCard = document.getElementById('opt-fact-card');
 const optBottomLine = document.getElementById('opt-bottom-line');
 const optDeepSky = document.getElementById('opt-deep-sky');
 const optSatellites = document.getElementById('opt-satellites');
+const optEquator = document.getElementById('opt-equator');
 const optInstrumental = document.getElementById('opt-instrumental');
 const optHoverInspector = document.getElementById('opt-hover-inspector');
 const optProportionalSizes = document.getElementById('opt-proportional-sizes');
 const optFreeExplore = document.getElementById('opt-free-explore');
 const optPlayerControls = document.getElementById('opt-player-controls');
+const LYRIC_PROVIDER_META = {
+limusic: { key: 'enableLimusic', label: 'Limusic (via Boidu)' },
+boidu: { key: 'enableBoidu', label: 'Boidu · Better Lyrics' },
+lyricsplus: { key: 'enableLyricsplus', label: 'LyricsPlus' },
+unison: { key: 'enableUnison', label: 'Unison' },
+lrclib: { key: 'enableLrclib', label: 'LRCLIB' },
+netease: { key: 'enableNetease', label: 'Netease Cloud Music' },
+ytmusic: { key: 'enableYtmusic', label: 'YouTube Music' },
+qqmusic: { key: 'enableQqmusic', label: 'QQ Music' },
+kugou: { key: 'enableKugou', label: 'Kugou' },
+};
 const optLyricPreferred = document.getElementById('opt-lyric-preferred');
-const optProvLimusic = document.getElementById('opt-prov-limusic');
-const optProvBoidu = document.getElementById('opt-prov-boidu');
-const optProvUnison = document.getElementById('opt-prov-unison');
-const optProvLyricsplus = document.getElementById('opt-prov-lyricsplus');
-const optProvLrclib = document.getElementById('opt-prov-lrclib');
-const optProvYtmusic = document.getElementById('opt-prov-ytmusic');
-const optProvNetease = document.getElementById('opt-prov-netease');
-const optProvQqmusic = document.getElementById('opt-prov-qqmusic');
-const optProvKugou = document.getElementById('opt-prov-kugou');
+const lyricHierarchyList = document.getElementById('lyric-hierarchy-list');
+const btnResetHierarchy = document.getElementById('btn-reset-hierarchy');
 const btnRefreshLyrics = document.getElementById('btn-refresh-lyrics');
 const optDemoMode = document.getElementById('opt-demo-mode');
 const elInspector = document.getElementById('star-inspector');
@@ -6150,10 +6403,11 @@ return item;
 function loadSettings() {
 try {
 const raw = localStorage.getItem(SETTINGS_KEY);
-if (!raw) return { ...DEFAULT_SETTINGS };
-return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+const merged = raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : { ...DEFAULT_SETTINGS };
+merged.lyricHierarchy = normalizeLyricHierarchy(merged.lyricHierarchy);
+return merged;
 } catch {
-return { ...DEFAULT_SETTINGS };
+return { ...DEFAULT_SETTINGS, lyricHierarchy: normalizeLyricHierarchy(DEFAULT_SETTINGS.lyricHierarchy) };
 }
 }
 function saveSettings(settings) {
@@ -6272,8 +6526,13 @@ rafScheduled: false,
 weTargetFps: 0,
 weBassAvg: 0.01,
 weBeatEnv: 0,
+weSubAvg: 0.008,
+wePrevSub: 0,
+weKickEnv: 0,
+weLastKickMs: 0,
+weInstEnv: 0,
 weLyricsCache: new Map(),
-audioLevels: { bass: 0, mid: 0, treble: 0, rms: 0, beat: 0 },
+audioLevels: { bass: 0, mid: 0, treble: 0, rms: 0, beat: 0, kick: 0, instrumental: 0 },
 };
 let hudTimer = null;
 let toastTimer = null;
@@ -6525,6 +6784,7 @@ fontFamily,
 fontStyle,
 showDeepSky: s.showDeepSky,
 showSatellites: s.showSatellites,
+showEquator: s.showEquator,
 instrumentalMode: s.instrumentalMode,
 hoverInspector: s.hoverInspector,
 proportionalSizes: s.proportionalSizes,
@@ -6563,21 +6823,14 @@ optFactCard.checked = Boolean(s.showFactCard);
 optBottomLine.checked = Boolean(s.showBottomLine);
 optDeepSky.checked = Boolean(s.showDeepSky);
 optSatellites.checked = Boolean(s.showSatellites);
+if (optEquator) optEquator.checked = Boolean(s.showEquator);
 optInstrumental.checked = Boolean(s.instrumentalMode);
 optHoverInspector.checked = Boolean(s.hoverInspector);
 optProportionalSizes.checked = Boolean(s.proportionalSizes);
 optFreeExplore.checked = Boolean(s.freeExplore);
 optPlayerControls.checked = Boolean(s.showPlayerControls);
 optLyricPreferred.value = s.lyricPreferred || 'auto';
-if (optProvLimusic) optProvLimusic.checked = Boolean(s.enableLimusic);
-optProvBoidu.checked = Boolean(s.enableBoidu);
-if (optProvUnison) optProvUnison.checked = Boolean(s.enableUnison);
-optProvLyricsplus.checked = Boolean(s.enableLyricsplus);
-optProvLrclib.checked = Boolean(s.enableLrclib);
-optProvYtmusic.checked = Boolean(s.enableYtmusic);
-if (optProvNetease) optProvNetease.checked = Boolean(s.enableNetease);
-if (optProvQqmusic) optProvQqmusic.checked = Boolean(s.enableQqmusic);
-if (optProvKugou) optProvKugou.checked = Boolean(s.enableKugou);
+renderLyricHierarchyList();
 optDemoMode.checked = Boolean(state.demoMode);
 optFontPreset.value = s.fontPreset || 'system';
 if (document.activeElement !== optCustomFontName) {
@@ -6596,6 +6849,128 @@ recomputeBottomClearY();
 appWindow?.setAlwaysOnTop?.(Boolean(s.alwaysOnTop)).catch(() => {});
 if (persist) {
 saveSettings(s);
+}
+}
+function renderLyricHierarchyList(refocus = null) {
+const normalized = normalizeLyricHierarchy(state.settings.lyricHierarchy);
+state.settings.lyricHierarchy = normalized;
+if (!lyricHierarchyList) return;
+lyricHierarchyList.textContent = '';
+const frag = document.createDocumentFragment();
+for (let idx = 0; idx < normalized.length; idx++) {
+const entry = normalized[idx];
+const meta = LYRIC_PROVIDER_META[entry.id];
+if (!meta) continue;
+const row = document.createElement('div');
+row.className = 'hierarchy-row';
+row.dataset.provider = entry.id;
+const checkLabel = document.createElement('label');
+checkLabel.className = 'hierarchy-check';
+checkLabel.htmlFor = `opt-prov-${entry.id}`;
+const checkbox = document.createElement('input');
+checkbox.type = 'checkbox';
+checkbox.id = `opt-prov-${entry.id}`;
+checkbox.checked = Boolean(state.settings[meta.key]);
+checkbox.addEventListener('change', () => {
+state.settings[meta.key] = checkbox.checked;
+applySettingsToApp(true);
+syncLyricPrefsToBackend();
+showToast(`${meta.label} ${checkbox.checked ? 'enabled' : 'disabled'}`);
+});
+const nameSpan = document.createElement('span');
+nameSpan.className = 'hierarchy-name';
+nameSpan.textContent = meta.label;
+checkLabel.append(checkbox, nameSpan);
+const controls = document.createElement('div');
+controls.className = 'hierarchy-controls';
+const select = document.createElement('select');
+select.className = 'tier-select';
+select.dataset.role = 'tier';
+select.setAttribute('aria-label', `${meta.label} tier`);
+for (let t = 1; t <= 3; t++) {
+const opt = document.createElement('option');
+opt.value = String(t);
+opt.textContent = `T${t}`;
+select.appendChild(opt);
+}
+select.value = String(entry.tier);
+select.addEventListener('change', () => {
+const nextTier = Math.max(1, Math.min(3, Number(select.value) || 3));
+const nextList = normalized.map((item) =>
+item.id === entry.id ? { id: item.id, tier: nextTier } : { ...item }
+);
+state.settings.lyricHierarchy = normalizeLyricHierarchy(nextList);
+saveSettings(state.settings);
+renderLyricHierarchyList({ id: entry.id, role: 'tier' });
+syncLyricPrefsToBackend();
+showToast(`${meta.label} assigned to Tier ${nextTier}`);
+});
+const btnUp = document.createElement('button');
+btnUp.className = 'order-btn';
+btnUp.type = 'button';
+btnUp.dataset.role = 'up';
+btnUp.textContent = '▲';
+btnUp.title = 'Move higher';
+btnUp.setAttribute('aria-label', `Move ${meta.label} higher`);
+btnUp.disabled = idx === 0 && entry.tier === 1;
+btnUp.addEventListener('click', () => {
+const nextList = normalized.map((item) => ({ ...item }));
+const cur = nextList[idx];
+if (idx > 0 && nextList[idx - 1].tier === cur.tier) {
+nextList[idx] = nextList[idx - 1];
+nextList[idx - 1] = cur;
+} else if (cur.tier > 1) {
+cur.tier -= 1;
+} else {
+return;
+}
+state.settings.lyricHierarchy = normalizeLyricHierarchy(nextList);
+saveSettings(state.settings);
+renderLyricHierarchyList({ id: entry.id, role: 'up' });
+syncLyricPrefsToBackend();
+});
+const btnDown = document.createElement('button');
+btnDown.className = 'order-btn';
+btnDown.type = 'button';
+btnDown.dataset.role = 'down';
+btnDown.textContent = '▼';
+btnDown.title = 'Move lower';
+btnDown.setAttribute('aria-label', `Move ${meta.label} lower`);
+btnDown.disabled = idx === normalized.length - 1 && entry.tier === 3;
+btnDown.addEventListener('click', () => {
+const nextList = normalized.map((item) => ({ ...item }));
+const cur = nextList[idx];
+if (idx < nextList.length - 1 && nextList[idx + 1].tier === cur.tier) {
+nextList[idx] = nextList[idx + 1];
+nextList[idx + 1] = cur;
+} else if (cur.tier < 3) {
+cur.tier += 1;
+const without = nextList.filter((_, i) => i !== idx);
+const insertAt = without.findIndex((item) => item.tier >= cur.tier);
+if (insertAt === -1) without.push(cur);
+else without.splice(insertAt, 0, cur);
+state.settings.lyricHierarchy = normalizeLyricHierarchy(without);
+saveSettings(state.settings);
+renderLyricHierarchyList({ id: entry.id, role: 'down' });
+syncLyricPrefsToBackend();
+return;
+} else {
+return;
+}
+state.settings.lyricHierarchy = normalizeLyricHierarchy(nextList);
+saveSettings(state.settings);
+renderLyricHierarchyList({ id: entry.id, role: 'down' });
+syncLyricPrefsToBackend();
+});
+controls.append(select, btnUp, btnDown);
+row.append(checkLabel, controls);
+frag.appendChild(row);
+}
+lyricHierarchyList.appendChild(frag);
+if (refocus) {
+const targetRow = lyricHierarchyList.querySelector(`[data-provider="${refocus.id}"]`);
+const targetEl = targetRow?.querySelector(`[data-role="${refocus.role}"]`);
+if (targetEl && !targetEl.disabled) targetEl.focus();
 }
 }
 function syncLyricPrefsToBackend() {
@@ -6618,6 +6993,7 @@ enableYtmusic: Boolean(state.settings.enableYtmusic),
 enableNetease: Boolean(state.settings.enableNetease),
 enableQqmusic: Boolean(state.settings.enableQqmusic),
 enableKugou: Boolean(state.settings.enableKugou),
+hierarchy: normalizeLyricHierarchy(state.settings.lyricHierarchy),
 },
 }).catch(() => {});
 }
@@ -7549,6 +7925,13 @@ state.settings.showSatellites = optSatellites.checked;
 applySettingsToApp(true);
 showToast(state.settings.showSatellites ? 'Satellites & Voyagers shown' : 'Satellites & Voyagers hidden');
 });
+if (optEquator) {
+optEquator.addEventListener('change', () => {
+state.settings.showEquator = optEquator.checked;
+applySettingsToApp(true);
+showToast(state.settings.showEquator ? 'Celestial equator shown' : 'Celestial equator hidden');
+});
+}
 optInstrumental.addEventListener('change', () => {
 state.settings.instrumentalMode = optInstrumental.checked;
 applySettingsToApp(true);
@@ -7593,24 +7976,12 @@ applySettingsToApp(true);
 syncLyricPrefsToBackend();
 showToast(`Preferred lyrics: ${optLyricPreferred.options[optLyricPreferred.selectedIndex]?.text || val}`);
 });
-const providerChecks = [
-[optProvLimusic, 'enableLimusic', 'Limusic'],
-[optProvBoidu, 'enableBoidu', 'Boidu'],
-[optProvUnison, 'enableUnison', 'Unison'],
-[optProvLyricsplus, 'enableLyricsplus', 'LyricsPlus'],
-[optProvLrclib, 'enableLrclib', 'LRCLIB'],
-[optProvYtmusic, 'enableYtmusic', 'YouTube Music'],
-[optProvNetease, 'enableNetease', 'Netease Cloud Music'],
-[optProvQqmusic, 'enableQqmusic', 'QQ Music'],
-[optProvKugou, 'enableKugou', 'Kugou'],
-];
-for (const [el, key, label] of providerChecks) {
-if (!el) continue;
-el.addEventListener('change', () => {
-state.settings[key] = el.checked;
+if (btnResetHierarchy) {
+btnResetHierarchy.addEventListener('click', () => {
+state.settings.lyricHierarchy = DEFAULT_LYRIC_HIERARCHY.map((e) => ({ ...e }));
 applySettingsToApp(true);
 syncLyricPrefsToBackend();
-showToast(`${label} ${el.checked ? 'enabled' : 'disabled'}`);
+showToast('Lyric hierarchy reset to default');
 });
 }
 btnRefreshLyrics.addEventListener('click', () => {
@@ -7800,6 +8171,7 @@ enableYtmusic: state.settings.enableYtmusic,
 enableNetease: state.settings.enableNetease,
 enableQqmusic: state.settings.enableQqmusic,
 enableKugou: state.settings.enableKugou,
+hierarchy: normalizeLyricHierarchy(state.settings.lyricHierarchy),
 }
 );
 if (myGen !== state.browserLookupGen) return;
@@ -7817,9 +8189,12 @@ if (!audioArray || audioArray.length === 0) return;
 const len = audioArray.length;
 const half = Math.min(64, (len >> 1) || len);
 const hasStereo = len >= half * 2;
+let subSum = 0;
 let bass = 0;
 let mid = 0;
 let treble = 0;
+let sideInst = 0;
+let airSum = 0;
 let total = 0;
 for (let i = 0; i < half; i++) {
 let l = audioArray[i] || 0;
@@ -7831,21 +8206,47 @@ let r = audioArray[i + half] || 0;
 if (r < 0) r = 0;
 else if (r > 1.5) r = 1.5;
 v = (l + r) * 0.5;
+if (i >= 4 && i < 48) {
+sideInst += Math.abs(l - r);
+}
 }
 total += v;
+if (i < 3) subSum += v;
 if (i < 6) bass += v;
 else if (i < 28) mid += v;
 else treble += v;
+if (i >= 32) airSum += v;
 }
+const nSub = Math.min(1, (subSum / 3) * 2.0);
 const nBass = Math.min(1, (bass / 6) * 1.8);
 const nMid = Math.min(1, (mid / 22) * 2.2);
 const nTreble = Math.min(1, (treble / Math.max(1, half - 28)) * 2.6);
 const nRms = Math.min(1, (total / half) * 2.0);
+const nSide = hasStereo ? Math.min(1, (sideInst / Math.max(1, Math.min(44, half - 4))) * 3.8) : 0;
+const nAir = Math.min(1, (airSum / Math.max(1, half - 32)) * 2.8);
+const rawInst = Math.min(1, nSide * 0.68 + nSub * 0.34 + nAir * 0.24);
+state.weInstEnv = rawInst > state.weInstEnv
+? state.weInstEnv * 0.50 + rawInst * 0.50
+: state.weInstEnv * 0.78 + rawInst * 0.22;
 state.weBassAvg = state.weBassAvg * 0.92 + nBass * 0.08;
 if (nBass > state.weBassAvg * 1.38 && nBass > 0.14) {
 state.weBeatEnv = 1.0;
 } else {
 state.weBeatEnv *= 0.82;
+}
+const subFlux = Math.max(0, nSub - state.wePrevSub);
+state.wePrevSub = state.wePrevSub * 0.35 + nSub * 0.65;
+state.weSubAvg = state.weSubAvg * 0.93 + nSub * 0.07;
+const nowMs = performance.now();
+if (
+nowMs - state.weLastKickMs >= 130 &&
+nSub > 0.14 &&
+(nSub > state.weSubAvg * 1.48 || (subFlux > 0.07 && nSub > state.weSubAvg * 1.25))
+) {
+state.weKickEnv = 1.0;
+state.weLastKickMs = nowMs;
+} else {
+state.weKickEnv *= 0.72;
 }
 const al = state.audioLevels;
 al.bass = nBass;
@@ -7853,6 +8254,8 @@ al.mid = nMid;
 al.treble = nTreble;
 al.rms = nRms;
 al.beat = state.weBeatEnv;
+al.kick = state.weKickEnv;
+al.instrumental = state.weInstEnv;
 }
 function registerWallpaperEngineHooks() {
 const hasWeGlobals =
@@ -7927,6 +8330,9 @@ state.settings.showDeepSky = Boolean(props.showdeepsky.value);
 }
 if (props.showsatellites && props.showsatellites.value !== undefined) {
 state.settings.showSatellites = Boolean(props.showsatellites.value);
+}
+if (props.showequator && props.showequator.value !== undefined) {
+state.settings.showEquator = Boolean(props.showequator.value);
 }
 if (props.instrumentalmode && props.instrumentalmode.value !== undefined) {
 state.settings.instrumentalMode = Boolean(props.instrumentalmode.value);
@@ -8093,6 +8499,8 @@ al.mid = p.mid || 0;
 al.treble = p.treble || 0;
 al.rms = p.rms || 0;
 al.beat = p.beat || 0;
+al.kick = p.kick || 0;
+al.instrumental = p.instrumental || 0;
 }
 });
 await listen('wallpaper-mode', (event) => {

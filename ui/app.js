@@ -1,6 +1,10 @@
 import { CONSTELLATIONS } from './constellations.js';
 import { COLOR_THEMES, StarVisualizer } from './visualizer.js';
-import { fetchLyricsInBrowser } from './we-lyrics.js';
+import {
+  DEFAULT_LYRIC_HIERARCHY,
+  fetchLyricsInBrowser,
+  normalizeLyricHierarchy,
+} from './we-lyrics.js';
 
 const SETTINGS_KEY = 'starlight:settings:v1';
 const CUSTOM_FONT_KEY = 'starlight:custom-font:v1';
@@ -93,6 +97,7 @@ const DEFAULT_SETTINGS = {
   showBottomLine: false,
   showDeepSky: true,
   showSatellites: true,
+  showEquator: true,
   instrumentalMode: true,
   hoverInspector: true,
   proportionalSizes: false,
@@ -108,6 +113,7 @@ const DEFAULT_SETTINGS = {
   enableNetease: true,
   enableQqmusic: true,
   enableKugou: true,
+  lyricHierarchy: DEFAULT_LYRIC_HIERARCHY.map((e) => ({ ...e })),
   alwaysOnTop: false,
   fontPreset: 'system',
   customFontName: '',
@@ -189,21 +195,27 @@ const optFactCard = document.getElementById('opt-fact-card');
 const optBottomLine = document.getElementById('opt-bottom-line');
 const optDeepSky = document.getElementById('opt-deep-sky');
 const optSatellites = document.getElementById('opt-satellites');
+const optEquator = document.getElementById('opt-equator');
 const optInstrumental = document.getElementById('opt-instrumental');
 const optHoverInspector = document.getElementById('opt-hover-inspector');
 const optProportionalSizes = document.getElementById('opt-proportional-sizes');
 const optFreeExplore = document.getElementById('opt-free-explore');
 const optPlayerControls = document.getElementById('opt-player-controls');
+const LYRIC_PROVIDER_META = {
+  limusic: { key: 'enableLimusic', label: 'Limusic (via Boidu)' },
+  boidu: { key: 'enableBoidu', label: 'Boidu · Better Lyrics' },
+  lyricsplus: { key: 'enableLyricsplus', label: 'LyricsPlus' },
+  unison: { key: 'enableUnison', label: 'Unison' },
+  lrclib: { key: 'enableLrclib', label: 'LRCLIB' },
+  netease: { key: 'enableNetease', label: 'Netease Cloud Music' },
+  ytmusic: { key: 'enableYtmusic', label: 'YouTube Music' },
+  qqmusic: { key: 'enableQqmusic', label: 'QQ Music' },
+  kugou: { key: 'enableKugou', label: 'Kugou' },
+};
+
 const optLyricPreferred = document.getElementById('opt-lyric-preferred');
-const optProvLimusic = document.getElementById('opt-prov-limusic');
-const optProvBoidu = document.getElementById('opt-prov-boidu');
-const optProvUnison = document.getElementById('opt-prov-unison');
-const optProvLyricsplus = document.getElementById('opt-prov-lyricsplus');
-const optProvLrclib = document.getElementById('opt-prov-lrclib');
-const optProvYtmusic = document.getElementById('opt-prov-ytmusic');
-const optProvNetease = document.getElementById('opt-prov-netease');
-const optProvQqmusic = document.getElementById('opt-prov-qqmusic');
-const optProvKugou = document.getElementById('opt-prov-kugou');
+const lyricHierarchyList = document.getElementById('lyric-hierarchy-list');
+const btnResetHierarchy = document.getElementById('btn-reset-hierarchy');
 const btnRefreshLyrics = document.getElementById('btn-refresh-lyrics');
 const optDemoMode = document.getElementById('opt-demo-mode');
 
@@ -251,10 +263,11 @@ function buildWords(text) {
 function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { ...DEFAULT_SETTINGS };
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const merged = raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : { ...DEFAULT_SETTINGS };
+    merged.lyricHierarchy = normalizeLyricHierarchy(merged.lyricHierarchy);
+    return merged;
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, lyricHierarchy: normalizeLyricHierarchy(DEFAULT_SETTINGS.lyricHierarchy) };
   }
 }
 
@@ -379,8 +392,13 @@ const state = {
   weTargetFps: 0,
   weBassAvg: 0.01,
   weBeatEnv: 0,
+  weSubAvg: 0.008,
+  wePrevSub: 0,
+  weKickEnv: 0,
+  weLastKickMs: 0,
+  weInstEnv: 0,
   weLyricsCache: new Map(),
-  audioLevels: { bass: 0, mid: 0, treble: 0, rms: 0, beat: 0 },
+  audioLevels: { bass: 0, mid: 0, treble: 0, rms: 0, beat: 0, kick: 0, instrumental: 0 },
 };
 
 let hudTimer = null;
@@ -662,6 +680,7 @@ function applySettingsToApp(persist = true) {
     fontStyle,
     showDeepSky: s.showDeepSky,
     showSatellites: s.showSatellites,
+    showEquator: s.showEquator,
     instrumentalMode: s.instrumentalMode,
     hoverInspector: s.hoverInspector,
     proportionalSizes: s.proportionalSizes,
@@ -702,21 +721,14 @@ function applySettingsToApp(persist = true) {
   optBottomLine.checked = Boolean(s.showBottomLine);
   optDeepSky.checked = Boolean(s.showDeepSky);
   optSatellites.checked = Boolean(s.showSatellites);
+  if (optEquator) optEquator.checked = Boolean(s.showEquator);
   optInstrumental.checked = Boolean(s.instrumentalMode);
   optHoverInspector.checked = Boolean(s.hoverInspector);
   optProportionalSizes.checked = Boolean(s.proportionalSizes);
   optFreeExplore.checked = Boolean(s.freeExplore);
   optPlayerControls.checked = Boolean(s.showPlayerControls);
   optLyricPreferred.value = s.lyricPreferred || 'auto';
-  if (optProvLimusic) optProvLimusic.checked = Boolean(s.enableLimusic);
-  optProvBoidu.checked = Boolean(s.enableBoidu);
-  if (optProvUnison) optProvUnison.checked = Boolean(s.enableUnison);
-  optProvLyricsplus.checked = Boolean(s.enableLyricsplus);
-  optProvLrclib.checked = Boolean(s.enableLrclib);
-  optProvYtmusic.checked = Boolean(s.enableYtmusic);
-  if (optProvNetease) optProvNetease.checked = Boolean(s.enableNetease);
-  if (optProvQqmusic) optProvQqmusic.checked = Boolean(s.enableQqmusic);
-  if (optProvKugou) optProvKugou.checked = Boolean(s.enableKugou);
+  renderLyricHierarchyList();
   optDemoMode.checked = Boolean(state.demoMode);
   optFontPreset.value = s.fontPreset || 'system';
   if (document.activeElement !== optCustomFontName) {
@@ -740,6 +752,142 @@ function applySettingsToApp(persist = true) {
   }
 }
 
+function renderLyricHierarchyList(refocus = null) {
+  const normalized = normalizeLyricHierarchy(state.settings.lyricHierarchy);
+  state.settings.lyricHierarchy = normalized;
+  if (!lyricHierarchyList) return;
+
+  lyricHierarchyList.textContent = '';
+  const frag = document.createDocumentFragment();
+
+  for (let idx = 0; idx < normalized.length; idx++) {
+    const entry = normalized[idx];
+    const meta = LYRIC_PROVIDER_META[entry.id];
+    if (!meta) continue;
+
+    const row = document.createElement('div');
+    row.className = 'hierarchy-row';
+    row.dataset.provider = entry.id;
+
+    const checkLabel = document.createElement('label');
+    checkLabel.className = 'hierarchy-check';
+    checkLabel.htmlFor = `opt-prov-${entry.id}`;
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `opt-prov-${entry.id}`;
+    checkbox.checked = Boolean(state.settings[meta.key]);
+    checkbox.addEventListener('change', () => {
+      state.settings[meta.key] = checkbox.checked;
+      applySettingsToApp(true);
+      syncLyricPrefsToBackend();
+      showToast(`${meta.label} ${checkbox.checked ? 'enabled' : 'disabled'}`);
+    });
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'hierarchy-name';
+    nameSpan.textContent = meta.label;
+    checkLabel.append(checkbox, nameSpan);
+
+    const controls = document.createElement('div');
+    controls.className = 'hierarchy-controls';
+
+    const select = document.createElement('select');
+    select.className = 'tier-select';
+    select.dataset.role = 'tier';
+    select.setAttribute('aria-label', `${meta.label} tier`);
+    for (let t = 1; t <= 3; t++) {
+      const opt = document.createElement('option');
+      opt.value = String(t);
+      opt.textContent = `T${t}`;
+      select.appendChild(opt);
+    }
+    select.value = String(entry.tier);
+    select.addEventListener('change', () => {
+      const nextTier = Math.max(1, Math.min(3, Number(select.value) || 3));
+      const nextList = normalized.map((item) =>
+        item.id === entry.id ? { id: item.id, tier: nextTier } : { ...item }
+      );
+      state.settings.lyricHierarchy = normalizeLyricHierarchy(nextList);
+      saveSettings(state.settings);
+      renderLyricHierarchyList({ id: entry.id, role: 'tier' });
+      syncLyricPrefsToBackend();
+      showToast(`${meta.label} assigned to Tier ${nextTier}`);
+    });
+
+    const btnUp = document.createElement('button');
+    btnUp.className = 'order-btn';
+    btnUp.type = 'button';
+    btnUp.dataset.role = 'up';
+    btnUp.textContent = '▲';
+    btnUp.title = 'Move higher';
+    btnUp.setAttribute('aria-label', `Move ${meta.label} higher`);
+    btnUp.disabled = idx === 0 && entry.tier === 1;
+    btnUp.addEventListener('click', () => {
+      const nextList = normalized.map((item) => ({ ...item }));
+      const cur = nextList[idx];
+      if (idx > 0 && nextList[idx - 1].tier === cur.tier) {
+        nextList[idx] = nextList[idx - 1];
+        nextList[idx - 1] = cur;
+      } else if (cur.tier > 1) {
+        cur.tier -= 1;
+      } else {
+        return;
+      }
+      state.settings.lyricHierarchy = normalizeLyricHierarchy(nextList);
+      saveSettings(state.settings);
+      renderLyricHierarchyList({ id: entry.id, role: 'up' });
+      syncLyricPrefsToBackend();
+    });
+
+    const btnDown = document.createElement('button');
+    btnDown.className = 'order-btn';
+    btnDown.type = 'button';
+    btnDown.dataset.role = 'down';
+    btnDown.textContent = '▼';
+    btnDown.title = 'Move lower';
+    btnDown.setAttribute('aria-label', `Move ${meta.label} lower`);
+    btnDown.disabled = idx === normalized.length - 1 && entry.tier === 3;
+    btnDown.addEventListener('click', () => {
+      const nextList = normalized.map((item) => ({ ...item }));
+      const cur = nextList[idx];
+      if (idx < nextList.length - 1 && nextList[idx + 1].tier === cur.tier) {
+        nextList[idx] = nextList[idx + 1];
+        nextList[idx + 1] = cur;
+      } else if (cur.tier < 3) {
+        cur.tier += 1;
+        // Place promoted-down item at top of the next tier instead of jumping to bottom
+        const without = nextList.filter((_, i) => i !== idx);
+        const insertAt = without.findIndex((item) => item.tier >= cur.tier);
+        if (insertAt === -1) without.push(cur);
+        else without.splice(insertAt, 0, cur);
+        state.settings.lyricHierarchy = normalizeLyricHierarchy(without);
+        saveSettings(state.settings);
+        renderLyricHierarchyList({ id: entry.id, role: 'down' });
+        syncLyricPrefsToBackend();
+        return;
+      } else {
+        return;
+      }
+      state.settings.lyricHierarchy = normalizeLyricHierarchy(nextList);
+      saveSettings(state.settings);
+      renderLyricHierarchyList({ id: entry.id, role: 'down' });
+      syncLyricPrefsToBackend();
+    });
+
+    controls.append(select, btnUp, btnDown);
+    row.append(checkLabel, controls);
+    frag.appendChild(row);
+  }
+
+  lyricHierarchyList.appendChild(frag);
+  if (refocus) {
+    const targetRow = lyricHierarchyList.querySelector(`[data-provider="${refocus.id}"]`);
+    const targetEl = targetRow?.querySelector(`[data-role="${refocus.role}"]`);
+    if (targetEl && !targetEl.disabled) targetEl.focus();
+  }
+}
+
 function syncLyricPrefsToBackend() {
   state.weLyricsCache.clear();
   if (!invoke) {
@@ -760,6 +908,7 @@ function syncLyricPrefsToBackend() {
       enableNetease: Boolean(state.settings.enableNetease),
       enableQqmusic: Boolean(state.settings.enableQqmusic),
       enableKugou: Boolean(state.settings.enableKugou),
+      hierarchy: normalizeLyricHierarchy(state.settings.lyricHierarchy),
     },
   }).catch(() => {});
 }
@@ -1814,6 +1963,14 @@ function wireControls() {
     showToast(state.settings.showSatellites ? 'Satellites & Voyagers shown' : 'Satellites & Voyagers hidden');
   });
 
+  if (optEquator) {
+    optEquator.addEventListener('change', () => {
+      state.settings.showEquator = optEquator.checked;
+      applySettingsToApp(true);
+      showToast(state.settings.showEquator ? 'Celestial equator shown' : 'Celestial equator hidden');
+    });
+  }
+
   optInstrumental.addEventListener('change', () => {
     state.settings.instrumentalMode = optInstrumental.checked;
     applySettingsToApp(true);
@@ -1864,24 +2021,12 @@ function wireControls() {
     showToast(`Preferred lyrics: ${optLyricPreferred.options[optLyricPreferred.selectedIndex]?.text || val}`);
   });
 
-  const providerChecks = [
-    [optProvLimusic, 'enableLimusic', 'Limusic'],
-    [optProvBoidu, 'enableBoidu', 'Boidu'],
-    [optProvUnison, 'enableUnison', 'Unison'],
-    [optProvLyricsplus, 'enableLyricsplus', 'LyricsPlus'],
-    [optProvLrclib, 'enableLrclib', 'LRCLIB'],
-    [optProvYtmusic, 'enableYtmusic', 'YouTube Music'],
-    [optProvNetease, 'enableNetease', 'Netease Cloud Music'],
-    [optProvQqmusic, 'enableQqmusic', 'QQ Music'],
-    [optProvKugou, 'enableKugou', 'Kugou'],
-  ];
-  for (const [el, key, label] of providerChecks) {
-    if (!el) continue;
-    el.addEventListener('change', () => {
-      state.settings[key] = el.checked;
+  if (btnResetHierarchy) {
+    btnResetHierarchy.addEventListener('click', () => {
+      state.settings.lyricHierarchy = DEFAULT_LYRIC_HIERARCHY.map((e) => ({ ...e }));
       applySettingsToApp(true);
       syncLyricPrefsToBackend();
-      showToast(`${label} ${el.checked ? 'enabled' : 'disabled'}`);
+      showToast('Lyric hierarchy reset to default');
     });
   }
 
@@ -2085,6 +2230,7 @@ async function lookupBrowserLyrics(force = false) {
       enableNetease: state.settings.enableNetease,
       enableQqmusic: state.settings.enableQqmusic,
       enableKugou: state.settings.enableKugou,
+      hierarchy: normalizeLyricHierarchy(state.settings.lyricHierarchy),
     }
   );
   if (myGen !== state.browserLookupGen) return;
@@ -2104,9 +2250,12 @@ function handleWallpaperAudioArray(audioArray) {
   const len = audioArray.length;
   const half = Math.min(64, (len >> 1) || len);
   const hasStereo = len >= half * 2;
+  let subSum = 0;
   let bass = 0;
   let mid = 0;
   let treble = 0;
+  let sideInst = 0;
+  let airSum = 0;
   let total = 0;
 
   for (let i = 0; i < half; i++) {
@@ -2120,18 +2269,31 @@ function handleWallpaperAudioArray(audioArray) {
       if (r < 0) r = 0;
       else if (r > 1.5) r = 1.5;
       v = (l + r) * 0.5;
+      if (i >= 4 && i < 48) {
+        sideInst += Math.abs(l - r);
+      }
     }
 
     total += v;
+    if (i < 3) subSum += v;
     if (i < 6) bass += v;
     else if (i < 28) mid += v;
     else treble += v;
+    if (i >= 32) airSum += v;
   }
 
+  const nSub = Math.min(1, (subSum / 3) * 2.0);
   const nBass = Math.min(1, (bass / 6) * 1.8);
   const nMid = Math.min(1, (mid / 22) * 2.2);
   const nTreble = Math.min(1, (treble / Math.max(1, half - 28)) * 2.6);
   const nRms = Math.min(1, (total / half) * 2.0);
+  const nSide = hasStereo ? Math.min(1, (sideInst / Math.max(1, Math.min(44, half - 4))) * 3.8) : 0;
+  const nAir = Math.min(1, (airSum / Math.max(1, half - 32)) * 2.8);
+  const rawInst = Math.min(1, nSide * 0.68 + nSub * 0.34 + nAir * 0.24);
+
+  state.weInstEnv = rawInst > state.weInstEnv
+    ? state.weInstEnv * 0.50 + rawInst * 0.50
+    : state.weInstEnv * 0.78 + rawInst * 0.22;
 
   state.weBassAvg = state.weBassAvg * 0.92 + nBass * 0.08;
   if (nBass > state.weBassAvg * 1.38 && nBass > 0.14) {
@@ -2140,12 +2302,29 @@ function handleWallpaperAudioArray(audioArray) {
     state.weBeatEnv *= 0.82;
   }
 
+  const subFlux = Math.max(0, nSub - state.wePrevSub);
+  state.wePrevSub = state.wePrevSub * 0.35 + nSub * 0.65;
+  state.weSubAvg = state.weSubAvg * 0.93 + nSub * 0.07;
+  const nowMs = performance.now();
+  if (
+    nowMs - state.weLastKickMs >= 130 &&
+    nSub > 0.14 &&
+    (nSub > state.weSubAvg * 1.48 || (subFlux > 0.07 && nSub > state.weSubAvg * 1.25))
+  ) {
+    state.weKickEnv = 1.0;
+    state.weLastKickMs = nowMs;
+  } else {
+    state.weKickEnv *= 0.72;
+  }
+
   const al = state.audioLevels;
   al.bass = nBass;
   al.mid = nMid;
   al.treble = nTreble;
   al.rms = nRms;
   al.beat = state.weBeatEnv;
+  al.kick = state.weKickEnv;
+  al.instrumental = state.weInstEnv;
 }
 
 function registerWallpaperEngineHooks() {
@@ -2225,6 +2404,9 @@ function registerWallpaperEngineHooks() {
       }
       if (props.showsatellites && props.showsatellites.value !== undefined) {
         state.settings.showSatellites = Boolean(props.showsatellites.value);
+      }
+      if (props.showequator && props.showequator.value !== undefined) {
+        state.settings.showEquator = Boolean(props.showequator.value);
       }
       if (props.instrumentalmode && props.instrumentalmode.value !== undefined) {
         state.settings.instrumentalMode = Boolean(props.instrumentalmode.value);
@@ -2402,6 +2584,8 @@ async function init() {
         al.treble = p.treble || 0;
         al.rms = p.rms || 0;
         al.beat = p.beat || 0;
+        al.kick = p.kick || 0;
+        al.instrumental = p.instrumental || 0;
       }
     });
     await listen('wallpaper-mode', (event) => {

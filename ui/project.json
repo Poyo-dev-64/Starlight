@@ -182,26 +182,32 @@
         "type": "bool",
         "value": true
       },
-      "instrumentalmode": {
+      "showequator": {
         "order": 19,
+        "text": "Celestial Equator",
+        "type": "bool",
+        "value": true
+      },
+      "instrumentalmode": {
+        "order": 20,
         "text": "Instrumental Solo Mode",
         "type": "bool",
         "value": true
       },
       "hoverinspector": {
-        "order": 20,
+        "order": 21,
         "text": "Hover Star Inspector",
         "type": "bool",
         "value": true
       },
       "proportionalsizes": {
-        "order": 21,
+        "order": 22,
         "text": "Proportional Celestial Sizes",
         "type": "bool",
         "value": false
       },
       "freeexplore": {
-        "order": 22,
+        "order": 23,
         "text": "Free Explore / Drag Mode",
         "type": "bool",
         "value": false
@@ -226,7 +232,7 @@
           { "label": "Midnight Ink", "value": "handwritten" },
           { "label": "Observatory Code", "value": "code" }
         ],
-        "order": 23,
+        "order": 24,
         "text": "Font Style",
         "type": "combo",
         "value": "system"
@@ -244,13 +250,13 @@
           { "label": "3. QQ Music", "value": "qqmusic" },
           { "label": "3. Kugou", "value": "kugou" }
         ],
-        "order": 24,
+        "order": 25,
         "text": "Preferred Lyric Provider",
         "type": "combo",
         "value": "auto"
       },
       "demomode": {
-        "order": 25,
+        "order": 26,
         "text": "Demo Mode (when paused)",
         "type": "bool",
         "value": false

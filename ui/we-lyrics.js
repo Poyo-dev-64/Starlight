@@ -1,5 +1,42 @@
 // Lightweight client-side lyrics engine for standalone browser / Wallpaper Engine Web CEF mode.
-// Strict provider hierarchy: Preferred Source -> Tier 1 (Limusic, Boidu) -> Tier 2 (LyricsPlus) -> Tier 3 (Unison, LRCLIB, Netease, YT Music, QQ Music, Kugou).
+// Customizable provider hierarchy: Preferred Source -> Tier 1 -> Tier 2 -> Tier 3 (defaults to Limusic/Boidu -> LyricsPlus -> Others).
+
+export const DEFAULT_LYRIC_HIERARCHY = [
+  { id: 'limusic', tier: 1 },
+  { id: 'boidu', tier: 1 },
+  { id: 'lyricsplus', tier: 2 },
+  { id: 'unison', tier: 3 },
+  { id: 'lrclib', tier: 3 },
+  { id: 'netease', tier: 3 },
+  { id: 'ytmusic', tier: 3 },
+  { id: 'qqmusic', tier: 3 },
+  { id: 'kugou', tier: 3 },
+];
+
+const DEFAULT_TIER_BY_ID = Object.fromEntries(DEFAULT_LYRIC_HIERARCHY.map((e) => [e.id, e.tier]));
+
+export function normalizeLyricHierarchy(raw) {
+  const seen = new Set();
+  const list = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const id = typeof item?.id === 'string' ? item.id.trim() : '';
+      if (!id || !(id in DEFAULT_TIER_BY_ID) || seen.has(id)) continue;
+      seen.add(id);
+      const t = Number(item.tier);
+      const tier = Number.isFinite(t) ? Math.max(1, Math.min(3, Math.round(t))) : DEFAULT_TIER_BY_ID[id];
+      list.push({ id, tier });
+    }
+  }
+  for (const def of DEFAULT_LYRIC_HIERARCHY) {
+    if (!seen.has(def.id)) {
+      list.push({ id: def.id, tier: def.tier });
+    }
+  }
+  // Keep tier progression clean (T1 -> T2 -> T3) while preserving intra-tier order
+  list.sort((a, b) => a.tier - b.tier);
+  return list;
+}
 
 function splitWordsTimed(text) {
   const tokens = String(text || '').trim().split(/\s+/).filter(Boolean);
@@ -620,6 +657,7 @@ export async function fetchLyricsInBrowser(trackKey, rawTitle, rawArtist, album,
     return null;
   };
 
+  const hierarchy = normalizeLyricHierarchy(prefs.hierarchy);
   const plainCandidates = [];
 
   // 0. Explicit Preferred Source: query ONLY it first before any fallback tier
@@ -629,29 +667,15 @@ export async function fetchLyricsInBrowser(trackKey, rawTitle, rawArtist, album,
     if (prefRes?.found) plainCandidates.push(prefRes);
   }
 
-  // Tier 1 (Top of Hierarchy): Limusic & Boidu ONLY
-  const tier1Ids = ['limusic', 'boidu'].filter((id) => id !== preferred && isEnabled[id]);
-  if (tier1Ids.length > 0) {
-    const res1 = await Promise.all(tier1Ids.map((id) => fetchProvider(id)));
-    const best1 = selectStageResult(res1, plainCandidates);
-    if (best1) return best1;
-  }
-
-  // Tier 2: LyricsPlus ONLY
-  if (preferred !== 'lyricsplus' && isEnabled.lyricsplus) {
-    const res2 = await fetchProvider('lyricsplus');
-    const best2 = selectStageResult([res2], plainCandidates);
-    if (best2) return best2;
-  }
-
-  // Tier 3: Remaining providers (Unison, LRCLIB, Netease, YT Music, QQ Music, Kugou)
-  const tier3Ids = ['unison', 'lrclib', 'netease', 'ytmusic', 'qqmusic', 'kugou'].filter(
-    (id) => id !== preferred && isEnabled[id]
-  );
-  if (tier3Ids.length > 0) {
-    const res3 = await Promise.all(tier3Ids.map((id) => fetchProvider(id)));
-    const best3 = selectStageResult(res3, plainCandidates);
-    if (best3) return best3;
+  // Tiers 1..3 follow user-assigned hierarchy & intra-tier priority order
+  for (let tier = 1; tier <= 3; tier++) {
+    const tierIds = hierarchy
+      .filter((entry) => entry.tier === tier && entry.id !== preferred && isEnabled[entry.id])
+      .map((entry) => entry.id);
+    if (tierIds.length === 0) continue;
+    const res = await Promise.all(tierIds.map((id) => fetchProvider(id)));
+    const best = selectStageResult(res, plainCandidates);
+    if (best) return best;
   }
 
   return plainCandidates[0] || empty;

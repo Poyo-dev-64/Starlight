@@ -178,6 +178,11 @@
           <span>Satellites &amp; Voyagers</span>
         </label>
 
+        <label class="toggle-row" for="opt-equator">
+          <input id="opt-equator" type="checkbox" checked />
+          <span>Celestial Equator</span>
+        </label>
+
         <label class="toggle-row" for="opt-instrumental">
           <input id="opt-instrumental" type="checkbox" checked />
           <span>Instrumental Solo Mode</span>
@@ -227,65 +232,24 @@
         <div class="select-row">
           <label for="opt-lyric-preferred" class="select-label">Preferred Source</label>
           <select id="opt-lyric-preferred" class="select-input">
-            <option value="auto">Auto (Limusic / Boidu → LyricsPlus → Others)</option>
-            <option value="limusic">1. Limusic (via Boidu)</option>
-            <option value="boidu">1. Boidu (Better Lyrics)</option>
-            <option value="lyricsplus">2. LyricsPlus</option>
-            <option value="unison">3. Unison</option>
-            <option value="lrclib">3. LRCLIB</option>
-            <option value="netease">3. Netease Cloud Music</option>
-            <option value="ytmusic">3. YouTube Music</option>
-            <option value="qqmusic">3. QQ Music</option>
-            <option value="kugou">3. Kugou</option>
+            <option value="auto">Auto (Custom Hierarchy)</option>
+            <option value="limusic">Limusic (via Boidu)</option>
+            <option value="boidu">Boidu (Better Lyrics)</option>
+            <option value="lyricsplus">LyricsPlus</option>
+            <option value="unison">Unison</option>
+            <option value="lrclib">LRCLIB</option>
+            <option value="netease">Netease Cloud Music</option>
+            <option value="ytmusic">YouTube Music</option>
+            <option value="qqmusic">QQ Music</option>
+            <option value="kugou">Kugou</option>
           </select>
         </div>
 
-        <label class="toggle-row" for="opt-prov-limusic">
-          <input id="opt-prov-limusic" type="checkbox" checked />
-          <span>Limusic (Top Priority)</span>
-        </label>
-
-        <label class="toggle-row" for="opt-prov-boidu">
-          <input id="opt-prov-boidu" type="checkbox" checked />
-          <span>Boidu · Better Lyrics (Top Priority)</span>
-        </label>
-
-        <label class="toggle-row" for="opt-prov-lyricsplus">
-          <input id="opt-prov-lyricsplus" type="checkbox" checked />
-          <span>LyricsPlus (2nd Priority)</span>
-        </label>
-
-        <label class="toggle-row" for="opt-prov-unison">
-          <input id="opt-prov-unison" type="checkbox" checked />
-          <span>Unison</span>
-        </label>
-
-        <label class="toggle-row" for="opt-prov-lrclib">
-          <input id="opt-prov-lrclib" type="checkbox" checked />
-          <span>LRCLIB</span>
-        </label>
-
-        <label class="toggle-row" for="opt-prov-netease">
-          <input id="opt-prov-netease" type="checkbox" checked />
-          <span>Netease Cloud Music</span>
-        </label>
-
-        <label class="toggle-row" for="opt-prov-ytmusic">
-          <input id="opt-prov-ytmusic" type="checkbox" checked />
-          <span>YouTube Music</span>
-        </label>
-
-        <label class="toggle-row" for="opt-prov-qqmusic">
-          <input id="opt-prov-qqmusic" type="checkbox" checked />
-          <span>QQ Music</span>
-        </label>
-
-        <label class="toggle-row" for="opt-prov-kugou">
-          <input id="opt-prov-kugou" type="checkbox" checked />
-          <span>Kugou</span>
-        </label>
+        <div class="hierarchy-hint">Assign tiers (T1–T3) &amp; order. Higher tiers run first; same tier runs in parallel.</div>
+        <div id="lyric-hierarchy-list" class="hierarchy-list"></div>
 
         <div class="btn-row">
+          <button id="btn-reset-hierarchy" class="pill-btn" type="button">Reset Hierarchy</button>
           <button id="btn-refresh-lyrics" class="pill-btn" type="button">Re-search Lyrics (R)</button>
         </div>
       </section>

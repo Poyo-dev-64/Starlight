@@ -85,6 +85,42 @@ struct LyricsPlusSyllabus {
     text: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricHierarchyEntry {
+    pub id: String,
+    pub tier: u8,
+}
+
+fn canonical_provider_id(raw: &str) -> Option<&'static str> {
+    match raw {
+        "limusic" => Some("limusic"),
+        "boidu" => Some("boidu"),
+        "lyricsplus" => Some("lyricsplus"),
+        "unison" => Some("unison"),
+        "lrclib" => Some("lrclib"),
+        "netease" => Some("netease"),
+        "ytmusic" => Some("ytmusic"),
+        "qqmusic" => Some("qqmusic"),
+        "kugou" => Some("kugou"),
+        _ => None,
+    }
+}
+
+fn default_lyric_hierarchy() -> Vec<LyricHierarchyEntry> {
+    vec![
+        LyricHierarchyEntry { id: "limusic".to_string(), tier: 1 },
+        LyricHierarchyEntry { id: "boidu".to_string(), tier: 1 },
+        LyricHierarchyEntry { id: "lyricsplus".to_string(), tier: 2 },
+        LyricHierarchyEntry { id: "unison".to_string(), tier: 3 },
+        LyricHierarchyEntry { id: "lrclib".to_string(), tier: 3 },
+        LyricHierarchyEntry { id: "netease".to_string(), tier: 3 },
+        LyricHierarchyEntry { id: "ytmusic".to_string(), tier: 3 },
+        LyricHierarchyEntry { id: "qqmusic".to_string(), tier: 3 },
+        LyricHierarchyEntry { id: "kugou".to_string(), tier: 3 },
+    ]
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
@@ -99,6 +135,8 @@ pub struct LyricProviderPrefs {
     pub enable_netease: bool,
     pub enable_qqmusic: bool,
     pub enable_kugou: bool,
+    #[serde(default = "default_lyric_hierarchy")]
+    pub hierarchy: Vec<LyricHierarchyEntry>,
 }
 
 impl Default for LyricProviderPrefs {
@@ -114,6 +152,7 @@ impl Default for LyricProviderPrefs {
             enable_netease: true,
             enable_qqmusic: true,
             enable_kugou: true,
+            hierarchy: default_lyric_hierarchy(),
         }
     }
 }
@@ -135,6 +174,47 @@ impl LyricProviderPrefs {
             "kugou" => self.enable_kugou,
             _ => false,
         }
+    }
+
+    fn ordered_tiers(&self, exclude_id: &str) -> [Vec<&'static str>; 3] {
+        const KNOWN: [&str; 9] = [
+            "limusic",
+            "boidu",
+            "lyricsplus",
+            "unison",
+            "lrclib",
+            "netease",
+            "ytmusic",
+            "qqmusic",
+            "kugou",
+        ];
+        let mut seen = [false; 9];
+        let mut tiers: [Vec<&'static str>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+
+        for entry in &self.hierarchy {
+            let Some(id) = canonical_provider_id(entry.id.trim()) else {
+                continue;
+            };
+            let Some(idx) = KNOWN.iter().position(|&k| k == id) else {
+                continue;
+            };
+            if seen[idx] {
+                continue;
+            }
+            seen[idx] = true;
+            if id != exclude_id && self.is_enabled(id) {
+                let tier_idx = (entry.tier.clamp(1, 3) - 1) as usize;
+                tiers[tier_idx].push(id);
+            }
+        }
+
+        for (idx, &id) in KNOWN.iter().enumerate() {
+            if !seen[idx] && id != exclude_id && self.is_enabled(id) {
+                tiers[2].push(id);
+            }
+        }
+
+        tiers
     }
 }
 
@@ -294,6 +374,71 @@ impl LyricsService {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn fetch_tier_concurrent(
+        &self,
+        tier_ids: &[&'static str],
+        track_key: &str,
+        derived_title: &str,
+        derived_artist: &str,
+        clean_title: &str,
+        clean_artist: &str,
+        raw_album: &str,
+        duration_sec: f64,
+    ) -> Vec<(&'static str, Option<LyricsPayload>)> {
+        let fetch_slot = |id: &'static str| async move {
+            if tier_ids.contains(&id) {
+                Some(
+                    self.fetch_by_id(
+                        id,
+                        track_key,
+                        derived_title,
+                        derived_artist,
+                        clean_title,
+                        clean_artist,
+                        raw_album,
+                        duration_sec,
+                    )
+                    .await,
+                )
+            } else {
+                None
+            }
+        };
+
+        let (limusic, boidu, lyricsplus, unison, lrclib, netease, ytmusic, qqmusic, kugou) = tokio::join!(
+            fetch_slot("limusic"),
+            fetch_slot("boidu"),
+            fetch_slot("lyricsplus"),
+            fetch_slot("unison"),
+            fetch_slot("lrclib"),
+            fetch_slot("netease"),
+            fetch_slot("ytmusic"),
+            fetch_slot("qqmusic"),
+            fetch_slot("kugou"),
+        );
+
+        let mut slots = [
+            ("limusic", limusic),
+            ("boidu", boidu),
+            ("lyricsplus", lyricsplus),
+            ("unison", unison),
+            ("lrclib", lrclib),
+            ("netease", netease),
+            ("ytmusic", ytmusic),
+            ("qqmusic", qqmusic),
+            ("kugou", kugou),
+        ];
+
+        let mut ordered = Vec::with_capacity(tier_ids.len());
+        for &id in tier_ids {
+            if let Some((_, payload)) = slots.iter_mut().find(|(k, _)| *k == id) {
+                ordered.push((id, payload.take()));
+            }
+        }
+        ordered
+    }
+
     async fn lookup_all_providers(
         &self,
         track_key: &str,
@@ -332,63 +477,14 @@ impl LyricsService {
             }
         }
 
-        // Tier 1 (Top of Hierarchy): Limusic & Boidu ONLY.
-        // Any synced hit in Tier 1 wins before LyricsPlus or any other provider is queried.
-        let limusic_ok = pref_id != "limusic" && prefs.is_enabled("limusic");
-        let boidu_ok = pref_id != "boidu" && prefs.is_enabled("boidu");
-        if limusic_ok || boidu_ok {
-            let (limusic_opt, boidu_opt) = tokio::join!(
-                async {
-                    if limusic_ok {
-                        Some(
-                            self.fetch_by_id(
-                                "limusic",
-                                track_key,
-                                &derived_title,
-                                &derived_artist,
-                                &clean_title,
-                                &clean_artist,
-                                raw_album,
-                                duration_sec,
-                            )
-                            .await,
-                        )
-                    } else {
-                        None
-                    }
-                },
-                async {
-                    if boidu_ok {
-                        Some(
-                            self.fetch_by_id(
-                                "boidu",
-                                track_key,
-                                &derived_title,
-                                &derived_artist,
-                                &clean_title,
-                                &clean_artist,
-                                raw_album,
-                                duration_sec,
-                            )
-                            .await,
-                        )
-                    } else {
-                        None
-                    }
-                }
-            );
-
-            let tier_1 = [("limusic", limusic_opt), ("boidu", boidu_opt)];
-            if let Some(best) = select_stage_result(&tier_1, &mut plain_candidates) {
-                return best;
+        // Tiers 1..=3 follow user-assigned hierarchy & intra-tier priority order.
+        for tier_ids in prefs.ordered_tiers(pref_id) {
+            if tier_ids.is_empty() {
+                continue;
             }
-        }
-
-        // Tier 2: LyricsPlus ONLY (queried only when both Limusic and Boidu had no synced match).
-        if pref_id != "lyricsplus" && prefs.is_enabled("lyricsplus") {
-            let lp_res = self
-                .fetch_by_id(
-                    "lyricsplus",
+            let stage = self
+                .fetch_tier_concurrent(
+                    &tier_ids,
                     track_key,
                     &derived_title,
                     &derived_artist,
@@ -398,39 +494,9 @@ impl LyricsService {
                     duration_sec,
                 )
                 .await;
-            let tier_2 = [("lyricsplus", Some(lp_res))];
-            if let Some(best) = select_stage_result(&tier_2, &mut plain_candidates) {
+            if let Some(best) = select_stage_result(&stage, &mut plain_candidates) {
                 return best;
             }
-        }
-
-        // Tier 3: Remaining providers (Unison, LRCLIB, Netease, YouTube Music, QQ Music, Kugou).
-        let unison_ok = pref_id != "unison" && prefs.is_enabled("unison");
-        let lrclib_ok = pref_id != "lrclib" && prefs.is_enabled("lrclib");
-        let netease_ok = pref_id != "netease" && prefs.is_enabled("netease");
-        let ytm_ok = pref_id != "ytmusic" && prefs.is_enabled("ytmusic");
-        let qq_ok = pref_id != "qqmusic" && prefs.is_enabled("qqmusic");
-        let kugou_ok = pref_id != "kugou" && prefs.is_enabled("kugou");
-
-        let (unison_opt, lrclib_opt, netease_opt, ytm_opt, qq_opt, kugou_opt) = tokio::join!(
-            async { if unison_ok { Some(self.fetch_by_id("unison", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
-            async { if lrclib_ok { Some(self.fetch_by_id("lrclib", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
-            async { if netease_ok { Some(self.fetch_by_id("netease", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
-            async { if ytm_ok { Some(self.fetch_by_id("ytmusic", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
-            async { if qq_ok { Some(self.fetch_by_id("qqmusic", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } },
-            async { if kugou_ok { Some(self.fetch_by_id("kugou", track_key, &derived_title, &derived_artist, &clean_title, &clean_artist, raw_album, duration_sec).await) } else { None } }
-        );
-
-        let tier_3 = [
-            ("unison", unison_opt),
-            ("lrclib", lrclib_opt),
-            ("netease", netease_opt),
-            ("ytmusic", ytm_opt),
-            ("qqmusic", qq_opt),
-            ("kugou", kugou_opt),
-        ];
-        if let Some(best) = select_stage_result(&tier_3, &mut plain_candidates) {
-            return best;
         }
 
         // 4. Plain-text fallback (preferred plain first, then Tier 1 -> Tier 2 -> Tier 3)
@@ -2686,5 +2752,31 @@ mod tests {
             ..LyricProviderPrefs::default()
         };
         assert!(custom_prefs.is_enabled("lrclib"));
+    }
+
+    #[test]
+    fn custom_hierarchy_groups_tiers_and_preserves_order() {
+        let prefs = LyricProviderPrefs {
+            enable_netease: false,
+            hierarchy: vec![
+                LyricHierarchyEntry { id: "lrclib".to_string(), tier: 1 },
+                LyricHierarchyEntry { id: "kugou".to_string(), tier: 1 },
+                LyricHierarchyEntry { id: "netease".to_string(), tier: 1 },
+                LyricHierarchyEntry { id: "boidu".to_string(), tier: 2 },
+                LyricHierarchyEntry { id: "unknown_id".to_string(), tier: 1 },
+                LyricHierarchyEntry { id: "lrclib".to_string(), tier: 3 },
+                LyricHierarchyEntry { id: "limusic".to_string(), tier: 3 },
+                // Omit ytmusic/unison/qqmusic/lyricsplus to verify automatic Tier 3 backfill
+            ],
+            ..LyricProviderPrefs::default()
+        };
+
+        let tiers = prefs.ordered_tiers("kugou");
+        assert_eq!(tiers[0], vec!["lrclib"]);
+        assert_eq!(tiers[1], vec!["boidu"]);
+        assert_eq!(
+            tiers[2],
+            vec!["limusic", "lyricsplus", "unison", "ytmusic", "qqmusic"]
+        );
     }
 }
