@@ -2,6 +2,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -138,6 +139,7 @@ pub struct LyricsService {
     client: Client,
     cache: Arc<Mutex<HashMap<String, LyricsPayload>>>,
     prefs: Arc<Mutex<LyricProviderPrefs>>,
+    prefs_gen: AtomicU64,
 }
 
 impl LyricsService {
@@ -152,10 +154,12 @@ impl LyricsService {
             client,
             cache: Arc::new(Mutex::new(HashMap::new())),
             prefs: Arc::new(Mutex::new(LyricProviderPrefs::default())),
+            prefs_gen: AtomicU64::new(0),
         }
     }
 
     pub async fn set_prefs(&self, next: LyricProviderPrefs) {
+        self.prefs_gen.fetch_add(1, Ordering::SeqCst);
         *self.prefs.lock().await = next;
         self.cache.lock().await.clear();
     }
@@ -177,6 +181,7 @@ impl LyricsService {
             return LyricsPayload::empty(track_key.to_string());
         }
 
+        let start_gen = self.prefs_gen.load(Ordering::SeqCst);
         {
             let cache = self.cache.lock().await;
             if let Some(cached) = cache.get(track_key) {
@@ -189,7 +194,7 @@ impl LyricsService {
             .await;
 
         let mut cache = self.cache.lock().await;
-        if result.found {
+        if result.found && self.prefs_gen.load(Ordering::SeqCst) == start_gen {
             cache.insert(track_key.to_string(), result.clone());
         }
         result

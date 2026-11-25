@@ -697,6 +697,7 @@ export class StarVisualizer {
     ctx.fillRect(0, 0, w, h);
 
     // Smooth WASAPI / Wallpaper Engine audio energy envelope
+    this.bottomClearY = frameState.bottomClearY;
     const react = clamp(this.settings.audioReactivity ?? 1.0, 0, 2);
     const rawAudio = frameState.audio || { bass: 0, mid: 0, treble: 0, rms: 0, beat: 0 };
     const aLerp = expSmoothing(dt, 18);
@@ -813,8 +814,8 @@ export class StarVisualizer {
       this._drawWordBubbles(ctx, dt, Math.max(inAlpha, 0.88), frameState);
 
       if (this.showLabels && inAlpha > 0.28) {
-        const labelY = cy + minDim * 0.30 * clamp(this.currentZoom, 0.65, 1.28) + 36;
-        this._drawConstellationTitle(ctx, toSky.constellation, cx, labelY, inAlpha);
+        const labelY = cy + minDim * 0.30 * clamp(this.currentZoom, 0.65, 1.28) + 34;
+        this._drawConstellationTitle(ctx, toSky.constellation, cx, labelY, inAlpha, cy, minDim, frameState.bottomClearY);
       }
     } else {
       const heroSky = this.skyConstellations[this.heroIndex];
@@ -836,8 +837,8 @@ export class StarVisualizer {
           ? this.skyConstellations[this.getNearestConstellationIndex()].constellation
           : heroSky.constellation;
         if (this.settings.freeExplore || heroZ > 0.25) {
-          const labelY = cy + minDim * 0.30 * clamp(this.currentZoom, 0.65, 1.28) + 36;
-          this._drawConstellationTitle(ctx, titleConst, cx, labelY, 1);
+          const labelY = cy + minDim * 0.30 * clamp(this.currentZoom, 0.65, 1.28) + 34;
+          this._drawConstellationTitle(ctx, titleConst, cx, labelY, 1, cy, minDim, frameState.bottomClearY);
         }
       }
     }
@@ -977,10 +978,10 @@ export class StarVisualizer {
     if (this.showLabels && showSubtleName && visibleCount > 0) {
       const avgX = sumX / visibleCount;
       const avgY = sumY / visibleCount;
-      if (avgX > 80 && avgX < this.width - 80 && avgY > 60 && avgY < this.height - 60) {
+      const bgClearY = Number.isFinite(this.bottomClearY) ? this.bottomClearY : this.height - 60;
+      if (avgX > 80 && avgX < this.width - 80 && avgY > 60 && avgY + 24 < bgClearY) {
         ctx.globalAlpha = clamp(0.14 * limbFade, 0, 0.22);
         ctx.font = `500 9px ${this.settings.fontFamily}`;
-        if ('letterSpacing' in ctx) ctx.letterSpacing = '2.5px';
         ctx.fillStyle = '#9dbce8';
         ctx.textAlign = 'center';
         ctx.fillText(constellation.name, avgX, avgY + 24);
@@ -1072,7 +1073,6 @@ export class StarVisualizer {
 
       if (this.showLabels && (vz > 0.60 || this.currentZoom > 1.25)) {
         ctx.font = `500 8.5px ${this.settings.fontFamily}`;
-        if ('letterSpacing' in ctx) ctx.letterSpacing = '1.4px';
         ctx.fillStyle = this._hexToRgba(obj.color, 0.36 * limbFade);
         ctx.textAlign = 'center';
         ctx.fillText(obj.id, 0, radius * 0.72 + 12);
@@ -1174,7 +1174,6 @@ export class StarVisualizer {
 
       if (this.showLabels && vz > 0.16) {
         ctx.font = `500 9px ${this.settings.fontFamily}`;
-        if ('letterSpacing' in ctx) ctx.letterSpacing = '1.8px';
         ctx.fillStyle = this._hexToRgba(body.color, 0.62 * limbFade);
         ctx.textAlign = 'center';
         const labelOffset = body.id === 'moon' ? 18 : 14;
@@ -1254,7 +1253,6 @@ export class StarVisualizer {
 
         if (this.showLabels && (probe.featured || vz > 0.25)) {
           ctx.font = `600 9px ${this.settings.fontFamily}`;
-          if ('letterSpacing' in ctx) ctx.letterSpacing = '1.6px';
           ctx.fillStyle = this._hexToRgba(probe.color, (probe.featured ? 0.85 : 0.58) * limbFade);
           ctx.textAlign = 'left';
           const tag = probe.featured
@@ -1326,7 +1324,6 @@ export class StarVisualizer {
 
       if (this.showLabels) {
         ctx.font = `600 8.5px ${this.settings.fontFamily}`;
-        if ('letterSpacing' in ctx) ctx.letterSpacing = '1.5px';
         ctx.fillStyle = this._hexToRgba(sat.color, 0.74 * limbFade);
         ctx.textAlign = 'left';
         ctx.fillText(sat.id, sx + 8, sy + 3);
@@ -1891,7 +1888,6 @@ export class StarVisualizer {
       if (this.showLabels && s.name && isActiveStar && glow > 0.55) {
         ctx.save();
         ctx.font = `500 10px ${this.settings.fontFamily}`;
-        if ('letterSpacing' in ctx) ctx.letterSpacing = '1.6px';
         ctx.fillStyle = `rgba(180, 210, 255, ${(0.48 * glow * fadeIn).toFixed(3)})`;
         ctx.textAlign = 'center';
         ctx.fillText(s.name.toUpperCase(), s.sx, s.sy + starR + 15);
@@ -2077,13 +2073,23 @@ export class StarVisualizer {
     }
   }
 
-  _drawConstellationTitle(ctx, hero, x, y, fadeIn) {
+  _drawConstellationTitle(ctx, hero, x, y, fadeIn, cy, minDim, bottomClearY) {
+    const safeBottom = Number.isFinite(bottomClearY) ? bottomClearY : this.height - 62;
+    let drawY = y;
+    if (drawY > safeBottom) {
+      const minBelowConst = cy + minDim * 0.21;
+      if (safeBottom >= minBelowConst) {
+        drawY = safeBottom;
+      } else {
+        drawY = Math.max(76, cy - minDim * 0.30 * clamp(this.currentZoom, 0.65, 1.15) - 24);
+      }
+    }
+
     ctx.save();
     ctx.textAlign = 'center';
     ctx.font = `500 11px ${this.settings.fontFamily}`;
-    if ('letterSpacing' in ctx) ctx.letterSpacing = '4px';
-    ctx.fillStyle = `rgba(175, 202, 240, ${(0.36 * fadeIn).toFixed(3)})`;
-    ctx.fillText(`${hero.name}  ·  ${hero.title.toUpperCase()}`, x, Math.min(this.height - 62, y));
+    ctx.fillStyle = `rgba(175, 202, 240, ${(0.42 * fadeIn).toFixed(3)})`;
+    ctx.fillText(`${hero.name.toUpperCase()}  ·  ${hero.title.toUpperCase()}`, x, drawY);
     ctx.restore();
   }
 

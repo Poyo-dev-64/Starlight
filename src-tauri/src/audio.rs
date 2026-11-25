@@ -3,6 +3,7 @@ use std::f32::consts::TAU;
 use std::ptr;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{
     eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator,
     AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
@@ -29,6 +30,65 @@ impl Drop for CoTaskMemGuard {
             unsafe { CoTaskMemFree(Some(self.0.cast())) };
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemAudioState {
+    pub volume: f32,
+    pub muted: bool,
+}
+
+fn with_endpoint_volume<F, R>(f: F) -> Result<R, String>
+where
+    F: FnOnce(&IAudioEndpointVolume) -> windows::core::Result<R>,
+{
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+                .map_err(|e| format!("enumerator error: {e:?}"))?;
+        let device = enumerator
+            .GetDefaultAudioEndpoint(eRender, eConsole)
+            .map_err(|e| format!("endpoint error: {e:?}"))?;
+        let endpoint: IAudioEndpointVolume = device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| format!("volume activate error: {e:?}"))?;
+        f(&endpoint).map_err(|e| format!("volume op error: {e:?}"))
+    }
+}
+
+pub fn get_system_audio() -> Result<SystemAudioState, String> {
+    with_endpoint_volume(|ep| unsafe {
+        let vol = ep.GetMasterVolumeLevelScalar()?.clamp(0.0, 1.0);
+        let muted = ep.GetMute()?.as_bool();
+        Ok(SystemAudioState { volume: vol, muted })
+    })
+}
+
+pub fn set_system_volume(level: f32) -> Result<SystemAudioState, String> {
+    let clamped = level.clamp(0.0, 1.0);
+    with_endpoint_volume(|ep| unsafe {
+        ep.SetMasterVolumeLevelScalar(clamped, ptr::null())?;
+        if clamped > 0.005 {
+            let _ = ep.SetMute(false, ptr::null());
+        }
+        let vol = ep.GetMasterVolumeLevelScalar()?.clamp(0.0, 1.0);
+        let muted = ep.GetMute()?.as_bool();
+        Ok(SystemAudioState { volume: vol, muted })
+    })
+}
+
+pub fn set_system_mute(muted: bool) -> Result<SystemAudioState, String> {
+    with_endpoint_volume(|ep| unsafe {
+        ep.SetMute(muted, ptr::null())?;
+        let vol = ep.GetMasterVolumeLevelScalar()?.clamp(0.0, 1.0);
+        let now_muted = ep.GetMute()?.as_bool();
+        Ok(SystemAudioState {
+            volume: vol,
+            muted: now_muted,
+        })
+    })
 }
 
 pub fn start_wasapi_thread(app: AppHandle) {

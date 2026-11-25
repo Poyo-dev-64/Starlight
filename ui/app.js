@@ -139,8 +139,10 @@ const elPlayerStatusDot = document.getElementById('player-status-dot');
 const elPlayerTitle = document.getElementById('player-title');
 const elPlayerArtist = document.getElementById('player-artist');
 const elPlayerSourceBadge = document.getElementById('player-source-badge');
+const elPlayerBar = document.getElementById('player-bar');
 const btnPlayerMute = document.getElementById('btn-player-mute');
 const playerAudioGain = document.getElementById('player-audio-gain');
+const elPlayerAudioVal = document.getElementById('player-audio-val');
 const elPlayerTimeCur = document.getElementById('player-time-cur');
 const elPlayerTimeDur = document.getElementById('player-time-dur');
 const elPlayerSeek = document.getElementById('player-seek');
@@ -293,6 +295,12 @@ const state = {
   syncOffsetSec: 0,
   demoMode: false,
   demoStartMs: 0,
+  browserLookupGen: 0,
+  systemVolume: 1.0,
+  systemMuted: false,
+  audioSeeking: false,
+  lastVolPollMs: 0,
+  lastVolSendMs: 0,
   lastLineIndex: -1,
   currentConstellationIndex: 0,
   wordsShownOnConstellation: 0,
@@ -543,11 +551,22 @@ function applySettingsToApp(persist = true) {
   valLines.textContent = `${s.lineOpacity.toFixed(2)}×`;
   optAudio.value = String(s.audioReactivity);
   valAudio.textContent = `${s.audioReactivity.toFixed(2)}×`;
-  if (playerAudioGain) {
-    playerAudioGain.value = String(s.audioReactivity);
-  }
-  if (btnPlayerMute) {
-    btnPlayerMute.classList.toggle('is-muted', Number(s.audioReactivity) <= 0.001);
+  if (invoke) {
+    syncSystemVolumeUi({ volume: state.systemVolume, muted: state.systemMuted });
+  } else {
+    if (playerAudioGain) {
+      playerAudioGain.min = '0';
+      playerAudioGain.max = '2';
+      playerAudioGain.step = '0.05';
+      playerAudioGain.title = 'Audio Reactivity Gain';
+      playerAudioGain.value = String(s.audioReactivity);
+    }
+    if (elPlayerAudioVal) {
+      elPlayerAudioVal.textContent = `${Number(s.audioReactivity).toFixed(2)}×`;
+    }
+    if (btnPlayerMute) {
+      btnPlayerMute.classList.toggle('is-muted', Number(s.audioReactivity) <= 0.001);
+    }
   }
   optWordSize.value = String(s.wordFontSize);
   valWordSize.textContent = `${s.wordFontSize}px`;
@@ -652,6 +671,7 @@ function applyMediaUpdate(media) {
 
   const isNewTrack = trackKey !== state.currentTrackKey;
   if (isNewTrack) {
+    state.browserLookupGen += 1;
     state.currentTrackKey = trackKey;
     state.lyrics = { trackKey, found: false, synced: false, wordSynced: false, lines: [], plainText: null, source: 'none' };
     state.lyricsLoading = Boolean(trackKey);
@@ -775,6 +795,30 @@ function updatePlayerProgress(posSec, durSec) {
       elPlayerSeek.value = '0';
       elPlayerSeek.disabled = true;
     }
+  }
+}
+
+function syncSystemVolumeUi(sysAudio) {
+  if (!sysAudio) return;
+  const vol = Math.max(0, Math.min(1, Number(sysAudio.volume) || 0));
+  const muted = Boolean(sysAudio.muted);
+  state.systemVolume = vol;
+  state.systemMuted = muted;
+
+  if (playerAudioGain) {
+    playerAudioGain.min = '0';
+    playerAudioGain.max = '1';
+    playerAudioGain.step = '0.01';
+    playerAudioGain.title = 'Windows Master Volume';
+    if (!state.audioSeeking) {
+      playerAudioGain.value = String(muted ? 0 : vol);
+    }
+  }
+  if (elPlayerAudioVal) {
+    elPlayerAudioVal.textContent = muted ? 'MUTE' : `${Math.round(vol * 100)}%`;
+  }
+  if (btnPlayerMute) {
+    btnPlayerMute.classList.toggle('is-muted', muted || vol <= 0.001);
   }
 }
 
@@ -1091,7 +1135,33 @@ function tick() {
   const bottomExpired = !frame.isPlaying && state.pausedBottomSec >= (state.settings.lyricDecaySec ?? 2.5);
   renderBottomLyric(frame, bottomExpired);
 
-  visualizer.render({ ...frame, audio: state.audioLevels });
+  if (invoke && !state.audioSeeking && nowMs - state.lastVolPollMs > 2500) {
+    state.lastVolPollMs = nowMs;
+    invoke('get_system_audio').then(syncSystemVolumeUi).catch(() => {});
+  }
+
+  let bottomClearY = window.innerHeight - 48;
+  if (state.settings.showPlayerControls && elPlayerBar) {
+    const pRect = elPlayerBar.getBoundingClientRect();
+    bottomClearY = Math.min(
+      bottomClearY,
+      pRect.height > 0 ? pRect.top - 16 : window.innerHeight - 138
+    );
+  }
+  if (state.settings.showBottomLine && elBottomLineWrap) {
+    const bVisible = !elBottomLineWrap.classList.contains('hidden');
+    if (bVisible) {
+      const bRect = elBottomLineWrap.getBoundingClientRect();
+      if (bRect.height > 0) bottomClearY = Math.min(bottomClearY, bRect.top - 20);
+    } else {
+      bottomClearY = Math.min(
+        bottomClearY,
+        state.settings.showPlayerControls ? window.innerHeight - 216 : window.innerHeight - 116
+      );
+    }
+  }
+
+  visualizer.render({ ...frame, audio: state.audioLevels, bottomClearY });
 
   // Free Explore: keep Fact Card and dropdown synced with whichever constellation is centered
   if (state.settings.freeExplore) {
@@ -1289,6 +1359,16 @@ function wireControls() {
   if (btnPlayerMute) {
     btnPlayerMute.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (invoke) {
+        const nextMuted = !state.systemMuted;
+        invoke('set_system_mute', { muted: nextMuted })
+          .then((res) => {
+            syncSystemVolumeUi(res);
+            showToast(res.muted ? 'System audio muted' : `System volume ${Math.round(res.volume * 100)}%`);
+          })
+          .catch(() => showToast('Volume control unavailable'));
+        return;
+      }
       const cur = Number(state.settings.audioReactivity);
       if (cur > 0.001) {
         state.preMuteAudioReactivity = cur;
@@ -1305,9 +1385,28 @@ function wireControls() {
   if (playerAudioGain) {
     playerAudioGain.addEventListener('input', () => {
       const val = parseFloat(playerAudioGain.value);
+      if (invoke) {
+        state.audioSeeking = true;
+        state.systemVolume = val;
+        state.systemMuted = val <= 0.001;
+        if (elPlayerAudioVal) elPlayerAudioVal.textContent = `${Math.round(val * 100)}%`;
+        if (btnPlayerMute) btnPlayerMute.classList.toggle('is-muted', val <= 0.001);
+        const now = performance.now();
+        if (now - state.lastVolSendMs > 35) {
+          state.lastVolSendMs = now;
+          invoke('set_system_volume', { volume: val }).then(syncSystemVolumeUi).catch(() => {});
+        }
+        return;
+      }
       if (val > 0.001) state.preMuteAudioReactivity = val;
       state.settings.audioReactivity = val;
       applySettingsToApp(true);
+    });
+    playerAudioGain.addEventListener('change', () => {
+      if (!invoke) return;
+      const val = parseFloat(playerAudioGain.value);
+      state.audioSeeking = false;
+      invoke('set_system_volume', { volume: val }).then(syncSystemVolumeUi).catch(() => {});
     });
   }
 
@@ -1487,10 +1586,25 @@ function wireControls() {
   });
 
   optLyricPreferred.addEventListener('change', () => {
-    state.settings.lyricPreferred = optLyricPreferred.value;
+    const val = optLyricPreferred.value;
+    state.settings.lyricPreferred = val;
+    const enableKeyMap = {
+      limusic: 'enableLimusic',
+      boidu: 'enableBoidu',
+      unison: 'enableUnison',
+      lyricsplus: 'enableLyricsplus',
+      lrclib: 'enableLrclib',
+      ytmusic: 'enableYtmusic',
+      netease: 'enableNetease',
+      qqmusic: 'enableQqmusic',
+      kugou: 'enableKugou',
+    };
+    if (val !== 'auto' && enableKeyMap[val]) {
+      state.settings[enableKeyMap[val]] = true;
+    }
     applySettingsToApp(true);
     syncLyricPrefsToBackend();
-    showToast(`Preferred lyrics: ${optLyricPreferred.options[optLyricPreferred.selectedIndex]?.text || optLyricPreferred.value}`);
+    showToast(`Preferred lyrics: ${optLyricPreferred.options[optLyricPreferred.selectedIndex]?.text || val}`);
   });
 
   const providerChecks = [
@@ -1664,6 +1778,7 @@ async function lookupBrowserLyrics(force = false) {
   const m = state.media;
   if (!m.hasSession || !m.title) return;
   const trackKey = `${(m.artist || '').trim().toLowerCase()}|${m.title.trim().toLowerCase()}`;
+  const myGen = ++state.browserLookupGen;
   if (!force && state.weLyricsCache.has(trackKey)) {
     applyLyricsUpdate(state.weLyricsCache.get(trackKey));
     return;
@@ -1689,6 +1804,7 @@ async function lookupBrowserLyrics(force = false) {
       enableKugou: state.settings.enableKugou,
     }
   );
+  if (myGen !== state.browserLookupGen) return;
   if (result.found) {
     state.weLyricsCache.set(trackKey, result);
   }
@@ -1914,6 +2030,7 @@ async function init() {
       if (initial?.lyrics && (!initial.lyrics.trackKey || initial.lyrics.trackKey === state.currentTrackKey)) {
         applyLyricsUpdate(initial.lyrics, state.lyricsLoading);
       }
+      invoke('get_system_audio').then(syncSystemVolumeUi).catch(() => {});
 
       const s = state.settings;
       if (

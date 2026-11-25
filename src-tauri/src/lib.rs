@@ -32,6 +32,7 @@ struct SharedState {
     lyrics: LyricsPayload,
     lyrics_loading: bool,
     current_track_key: String,
+    lookup_gen: u64,
 }
 
 struct AppContext {
@@ -110,6 +111,27 @@ async fn media_seek(position_sec: f64) -> Result<bool, String> {
         .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn get_system_audio() -> Result<audio::SystemAudioState, String> {
+    tauri::async_runtime::spawn_blocking(audio::get_system_audio)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_system_volume(volume: f32) -> Result<audio::SystemAudioState, String> {
+    tauri::async_runtime::spawn_blocking(move || audio::set_system_volume(volume))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_system_mute(muted: bool) -> Result<audio::SystemAudioState, String> {
+    tauri::async_runtime::spawn_blocking(move || audio::set_system_mute(muted))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn spawn_lyrics_lookup(
     app: AppHandle,
     shared: Arc<Mutex<SharedState>>,
@@ -126,10 +148,12 @@ fn spawn_lyrics_lookup(
         media.title, media.artist, media.end_sec
     );
 
-    {
+    let my_gen = {
         let mut guard = shared.lock().unwrap();
+        guard.lookup_gen = guard.lookup_gen.wrapping_add(1);
         guard.lyrics_loading = true;
-    }
+        guard.lookup_gen
+    };
 
     let loading_evt = LyricsLoadingEvent {
         track_key: track_key.clone(),
@@ -150,18 +174,19 @@ fn spawn_lyrics_lookup(
             .await;
 
         eprintln!(
-            "[starlight] lyrics lookup finished: key='{}' found={} synced={} word_synced={} lines={} source={}",
+            "[starlight] lyrics lookup finished: key='{}' found={} synced={} word_synced={} lines={} source={} gen={}",
             track_key,
             payload.found,
             payload.synced,
             payload.word_synced,
             payload.lines.len(),
-            payload.source
+            payload.source,
+            my_gen
         );
 
         let should_emit = {
             let mut guard = shared.lock().unwrap();
-            if guard.current_track_key == track_key {
+            if guard.current_track_key == track_key && guard.lookup_gen == my_gen {
                 guard.lyrics = payload.clone();
                 guard.lyrics_loading = false;
                 true
@@ -212,6 +237,7 @@ fn start_smtc_thread(
                     guard.current_track_key = track_key.clone();
                     guard.lyrics = LyricsPayload::empty(track_key.clone());
                     guard.lyrics_loading = !track_key.is_empty();
+                    guard.lookup_gen = guard.lookup_gen.wrapping_add(1);
                     track_changed = true;
                 }
             }
@@ -254,6 +280,7 @@ pub fn run() {
         lyrics: LyricsPayload::empty(String::new()),
         lyrics_loading: false,
         current_track_key: String::new(),
+        lookup_gen: 0,
     }));
     let lyrics_service = Arc::new(LyricsService::new());
 
@@ -270,7 +297,10 @@ pub fn run() {
             refresh_lyrics,
             set_lyric_prefs,
             media_control,
-            media_seek
+            media_seek,
+            get_system_audio,
+            set_system_volume,
+            set_system_mute
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

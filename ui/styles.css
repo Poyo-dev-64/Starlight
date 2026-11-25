@@ -6,10 +6,10 @@
   --brand-color: #cfe4ff;
   --font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-style: normal;
-  --hud-surface: color-mix(in oklab, #ffffff 6%, #000000);
-  --hud-border: color-mix(in oklab, #cfe4ff 22%, #000000);
-  --hud-hover: color-mix(in oklab, #cfe4ff 14%, #000000);
-  --danger-hover: color-mix(in oklab, #ff6b6b 24%, #000000);
+  --hud-surface: rgba(255, 255, 255, 0.06);
+  --hud-border: rgba(207, 228, 255, 0.22);
+  --hud-hover: rgba(207, 228, 255, 0.14);
+  --danger-hover: rgba(255, 107, 107, 0.24);
 }
 
 * {
@@ -108,7 +108,7 @@ body.wallpaper-mode .fact-card {
   width: min(650px, calc(100vw - 36px));
   padding: 10px 14px;
   border-radius: 14px;
-  background: color-mix(in oklab, #080d16 82%, #000000);
+  background: rgba(8, 13, 22, 0.84);
   border: 1px solid var(--hud-border);
   backdrop-filter: blur(14px);
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.82);
@@ -203,8 +203,8 @@ body:not(.show-player-controls) .player-bar {
   gap: 5px;
   padding: 2px 7px 2px 3px;
   border-radius: 999px;
-  background: color-mix(in oklab, #cfe4ff 6%, #000000);
-  border: 1px solid color-mix(in oklab, #cfe4ff 14%, #000000);
+  background: rgba(207, 228, 255, 0.06);
+  border: 1px solid rgba(207, 228, 255, 0.14);
 }
 
 .player-btn-audio {
@@ -235,8 +235,17 @@ body:not(.show-player-controls) .player-bar {
   cursor: pointer;
 }
 
+.player-audio-val {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 28px;
+  text-align: right;
+}
+
 @media (max-width: 560px) {
   .player-audio-slider,
+  .player-audio-val,
   .player-bar-right .lyric-badge {
     display: none;
   }
@@ -282,7 +291,7 @@ body:not(.show-player-controls) .player-bar {
 }
 
 .player-btn-play {
-  background: color-mix(in oklab, #cfe4ff 12%, #000000);
+  background: rgba(207, 228, 255, 0.12);
   border-color: var(--hud-border);
 }
 
@@ -419,7 +428,7 @@ body:not(.show-player-controls) .player-bar {
 
 .ctrl-btn.active {
   border-color: rgba(207, 228, 255, 0.65);
-  background: color-mix(in oklab, #cfe4ff 18%, #000000);
+  background: rgba(207, 228, 255, 0.18);
 }
 
 .ctrl-close:hover,
@@ -439,7 +448,7 @@ body:not(.show-player-controls) .player-bar {
   display: flex;
   flex-direction: column;
   border-radius: 14px;
-  background: color-mix(in oklab, #0b1018 82%, #000000);
+  background: rgba(11, 16, 24, 0.84);
   border: 1px solid var(--hud-border);
   backdrop-filter: blur(16px);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.85);
@@ -529,7 +538,7 @@ body.settings-open .settings-drawer {
   input[type="range"]::-webkit-slider-runnable-track {
     height: 6px;
     border-radius: 3px;
-    background: color-mix(in oklab, #cfe4ff 25%, #000000);
+    background: rgba(207, 228, 255, 0.25);
   }
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
@@ -604,8 +613,8 @@ body.settings-open .settings-drawer {
   width: min(315px, calc(100vw - 36px));
   padding: 11px 13px;
   border-radius: 12px;
-  background: color-mix(in oklab, #0a101a 74%, #000000);
-  border: 1px solid color-mix(in oklab, #cfe4ff 20%, #000000);
+  background: rgba(10, 16, 26, 0.78);
+  border: 1px solid rgba(207, 228, 255, 0.20);
   backdrop-filter: blur(12px);
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.75);
   transition: opacity 0.25s ease, transform 0.25s ease;
@@ -760,7 +769,7 @@ body.settings-open .settings-drawer {
 }
 
 body.show-player-controls .bottom-line-wrap {
-  bottom: 132px;
+  bottom: 138px;
 }
 
 .bottom-line-wrap.hidden {
@@ -856,8 +865,8 @@ body.show-player-controls .bottom-line-wrap {
   max-width: 276px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: color-mix(in oklab, #080d16 86%, #000000);
-  border: 1px solid color-mix(in oklab, #cfe4ff 26%, #000000);
+  background: rgba(8, 13, 22, 0.88);
+  border: 1px solid rgba(207, 228, 255, 0.26);
   backdrop-filter: blur(12px);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.85);
   pointer-events: none;
@@ -900,7 +909,7 @@ body.show-player-controls .bottom-line-wrap {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #9dc2f5;
-  border: 1px solid color-mix(in oklab, #cfe4ff 20%, #000000);
+  border: 1px solid rgba(207, 228, 255, 0.20);
   padding: 1px 6px;
   border-radius: 999px;
   white-space: nowrap;
