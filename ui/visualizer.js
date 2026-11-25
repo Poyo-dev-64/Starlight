@@ -366,9 +366,10 @@ export class StarVisualizer {
   }
 
   resize() {
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.width = window.innerWidth;
-    this.height = window.innerHeight;
+    const isWallpaper = typeof document !== 'undefined' && document.body?.classList.contains('wallpaper-mode');
+    this.dpr = Math.min(window.devicePixelRatio || 1, isWallpaper ? 1.5 : 2);
+    this.width = Math.max(1, window.innerWidth || 1);
+    this.height = Math.max(1, window.innerHeight || 1);
     this.canvas.width = Math.floor(this.width * this.dpr);
     this.canvas.height = Math.floor(this.height * this.dpr);
     this.canvas.style.width = `${this.width}px`;

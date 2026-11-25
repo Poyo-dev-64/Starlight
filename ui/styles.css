@@ -90,6 +90,13 @@ body.wallpaper-mode .fact-card {
   bottom: 24px;
 }
 
+body.wallpaper-mode .player-bar,
+body.wallpaper-mode .fact-card,
+body.wallpaper-mode .star-inspector {
+  backdrop-filter: none;
+  background: rgba(8, 13, 22, 0.92);
+}
+
 .hud-top {
   top: 0;
   display: flex;
@@ -197,55 +204,7 @@ body:not(.show-player-controls) .player-bar {
   justify-self: end;
 }
 
-.player-audio-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 7px 2px 3px;
-  border-radius: 999px;
-  background: rgba(207, 228, 255, 0.06);
-  border: 1px solid rgba(207, 228, 255, 0.14);
-}
-
-.player-btn-audio {
-  width: 24px;
-  height: 24px;
-}
-
-.player-btn-audio .icon-muted {
-  display: none;
-}
-
-.player-btn-audio.is-muted {
-  color: var(--text-muted);
-}
-
-.player-btn-audio.is-muted .icon-waves {
-  display: none;
-}
-
-.player-btn-audio.is-muted .icon-muted {
-  display: block;
-}
-
-.player-audio-slider {
-  width: 58px;
-  height: 4px;
-  accent-color: #cfe4ff;
-  cursor: pointer;
-}
-
-.player-audio-val {
-  font-size: 10px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  min-width: 28px;
-  text-align: right;
-}
-
 @media (max-width: 560px) {
-  .player-audio-slider,
-  .player-audio-val,
   .player-bar-right .lyric-badge {
     display: none;
   }

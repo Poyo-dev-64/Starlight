@@ -111,27 +111,6 @@ async fn media_seek(position_sec: f64) -> Result<bool, String> {
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-async fn get_system_audio() -> Result<audio::SystemAudioState, String> {
-    tauri::async_runtime::spawn_blocking(audio::get_system_audio)
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn set_system_volume(volume: f32) -> Result<audio::SystemAudioState, String> {
-    tauri::async_runtime::spawn_blocking(move || audio::set_system_volume(volume))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn set_system_mute(muted: bool) -> Result<audio::SystemAudioState, String> {
-    tauri::async_runtime::spawn_blocking(move || audio::set_system_mute(muted))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
 fn spawn_lyrics_lookup(
     app: AppHandle,
     shared: Arc<Mutex<SharedState>>,
@@ -297,10 +276,7 @@ pub fn run() {
             refresh_lyrics,
             set_lyric_prefs,
             media_control,
-            media_seek,
-            get_system_audio,
-            set_system_volume,
-            set_system_mute
+            media_seek
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

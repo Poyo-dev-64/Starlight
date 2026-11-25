@@ -2722,9 +2722,10 @@ class StarVisualizer {
   }
 
   resize() {
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.width = window.innerWidth;
-    this.height = window.innerHeight;
+    const isWallpaper = typeof document !== 'undefined' && document.body?.classList.contains('wallpaper-mode');
+    this.dpr = Math.min(window.devicePixelRatio || 1, isWallpaper ? 1.5 : 2);
+    this.width = Math.max(1, window.innerWidth || 1);
+    this.height = Math.max(1, window.innerHeight || 1);
     this.canvas.width = Math.floor(this.width * this.dpr);
     this.canvas.height = Math.floor(this.height * this.dpr);
     this.canvas.style.width = `${this.width}px`;
@@ -5130,9 +5131,6 @@ const elPlayerTitle = document.getElementById('player-title');
 const elPlayerArtist = document.getElementById('player-artist');
 const elPlayerSourceBadge = document.getElementById('player-source-badge');
 const elPlayerBar = document.getElementById('player-bar');
-const btnPlayerMute = document.getElementById('btn-player-mute');
-const playerAudioGain = document.getElementById('player-audio-gain');
-const elPlayerAudioVal = document.getElementById('player-audio-val');
 const elPlayerTimeCur = document.getElementById('player-time-cur');
 const elPlayerTimeDur = document.getElementById('player-time-dur');
 const elPlayerSeek = document.getElementById('player-seek');
@@ -5286,11 +5284,6 @@ const state = {
   demoMode: false,
   demoStartMs: 0,
   browserLookupGen: 0,
-  systemVolume: 1.0,
-  systemMuted: false,
-  audioSeeking: false,
-  lastVolPollMs: 0,
-  lastVolSendMs: 0,
   lastLineIndex: -1,
   currentConstellationIndex: 0,
   wordsShownOnConstellation: 0,
@@ -5541,23 +5534,6 @@ function applySettingsToApp(persist = true) {
   valLines.textContent = `${s.lineOpacity.toFixed(2)}×`;
   optAudio.value = String(s.audioReactivity);
   valAudio.textContent = `${s.audioReactivity.toFixed(2)}×`;
-  if (invoke) {
-    syncSystemVolumeUi({ volume: state.systemVolume, muted: state.systemMuted });
-  } else {
-    if (playerAudioGain) {
-      playerAudioGain.min = '0';
-      playerAudioGain.max = '2';
-      playerAudioGain.step = '0.05';
-      playerAudioGain.title = 'Audio Reactivity Gain';
-      playerAudioGain.value = String(s.audioReactivity);
-    }
-    if (elPlayerAudioVal) {
-      elPlayerAudioVal.textContent = `${Number(s.audioReactivity).toFixed(2)}×`;
-    }
-    if (btnPlayerMute) {
-      btnPlayerMute.classList.toggle('is-muted', Number(s.audioReactivity) <= 0.001);
-    }
-  }
   optWordSize.value = String(s.wordFontSize);
   valWordSize.textContent = `${s.wordFontSize}px`;
   optLyricDecay.value = String(s.lyricDecaySec ?? 2.5);
@@ -5785,30 +5761,6 @@ function updatePlayerProgress(posSec, durSec) {
       elPlayerSeek.value = '0';
       elPlayerSeek.disabled = true;
     }
-  }
-}
-
-function syncSystemVolumeUi(sysAudio) {
-  if (!sysAudio) return;
-  const vol = Math.max(0, Math.min(1, Number(sysAudio.volume) || 0));
-  const muted = Boolean(sysAudio.muted);
-  state.systemVolume = vol;
-  state.systemMuted = muted;
-
-  if (playerAudioGain) {
-    playerAudioGain.min = '0';
-    playerAudioGain.max = '1';
-    playerAudioGain.step = '0.01';
-    playerAudioGain.title = 'Windows Master Volume';
-    if (!state.audioSeeking) {
-      playerAudioGain.value = String(muted ? 0 : vol);
-    }
-  }
-  if (elPlayerAudioVal) {
-    elPlayerAudioVal.textContent = muted ? 'MUTE' : `${Math.round(vol * 100)}%`;
-  }
-  if (btnPlayerMute) {
-    btnPlayerMute.classList.toggle('is-muted', muted || vol <= 0.001);
   }
 }
 
@@ -6125,11 +6077,6 @@ function tick() {
   const bottomExpired = !frame.isPlaying && state.pausedBottomSec >= (state.settings.lyricDecaySec ?? 2.5);
   renderBottomLyric(frame, bottomExpired);
 
-  if (invoke && !state.audioSeeking && nowMs - state.lastVolPollMs > 2500) {
-    state.lastVolPollMs = nowMs;
-    invoke('get_system_audio').then(syncSystemVolumeUi).catch(() => {});
-  }
-
   let bottomClearY = window.innerHeight - 48;
   if (state.settings.showPlayerControls && elPlayerBar) {
     const pRect = elPlayerBar.getBoundingClientRect();
@@ -6345,60 +6292,6 @@ function wireControls() {
     e.stopPropagation();
     sendMediaControl('next');
   });
-
-  if (btnPlayerMute) {
-    btnPlayerMute.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (invoke) {
-        const nextMuted = !state.systemMuted;
-        invoke('set_system_mute', { muted: nextMuted })
-          .then((res) => {
-            syncSystemVolumeUi(res);
-            showToast(res.muted ? 'System audio muted' : `System volume ${Math.round(res.volume * 100)}%`);
-          })
-          .catch(() => showToast('Volume control unavailable'));
-        return;
-      }
-      const cur = Number(state.settings.audioReactivity);
-      if (cur > 0.001) {
-        state.preMuteAudioReactivity = cur;
-        state.settings.audioReactivity = 0;
-        showToast('Audio reactivity muted');
-      } else {
-        state.settings.audioReactivity = state.preMuteAudioReactivity > 0.05 ? state.preMuteAudioReactivity : 1.0;
-        showToast(`Audio reactivity ${state.settings.audioReactivity.toFixed(2)}×`);
-      }
-      applySettingsToApp(true);
-    });
-  }
-
-  if (playerAudioGain) {
-    playerAudioGain.addEventListener('input', () => {
-      const val = parseFloat(playerAudioGain.value);
-      if (invoke) {
-        state.audioSeeking = true;
-        state.systemVolume = val;
-        state.systemMuted = val <= 0.001;
-        if (elPlayerAudioVal) elPlayerAudioVal.textContent = `${Math.round(val * 100)}%`;
-        if (btnPlayerMute) btnPlayerMute.classList.toggle('is-muted', val <= 0.001);
-        const now = performance.now();
-        if (now - state.lastVolSendMs > 35) {
-          state.lastVolSendMs = now;
-          invoke('set_system_volume', { volume: val }).then(syncSystemVolumeUi).catch(() => {});
-        }
-        return;
-      }
-      if (val > 0.001) state.preMuteAudioReactivity = val;
-      state.settings.audioReactivity = val;
-      applySettingsToApp(true);
-    });
-    playerAudioGain.addEventListener('change', () => {
-      if (!invoke) return;
-      const val = parseFloat(playerAudioGain.value);
-      state.audioSeeking = false;
-      invoke('set_system_volume', { volume: val }).then(syncSystemVolumeUi).catch(() => {});
-    });
-  }
 
   elPlayerSeek.addEventListener('input', () => {
     state.playerSeeking = true;
@@ -7020,7 +6913,6 @@ async function init() {
       if (initial?.lyrics && (!initial.lyrics.trackKey || initial.lyrics.trackKey === state.currentTrackKey)) {
         applyLyricsUpdate(initial.lyrics, state.lyricsLoading);
       }
-      invoke('get_system_audio').then(syncSystemVolumeUi).catch(() => {});
 
       const s = state.settings;
       if (
