@@ -1,0 +1,17 @@
+# Rust / Tauri build artifacts
+src-tauri/target/
+target/
+**/*.rs.bk
+
+# Logs & temp files
+*.log
+*.tmp
+*.bak
+.tmp/
+
+# OS & editor clutter
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/

@@ -1,0 +1,229 @@
+{
+  "contentrating": "Everyone",
+  "description": "Starlight — Pure black 88-constellation 3D hemisphere visualizer with audio-reactive stars, deep-sky objects, live planets, Voyagers, and synced lyrics.",
+  "file": "index.html",
+  "general": {
+    "properties": {
+      "schemecolor": {
+        "order": 0,
+        "text": "ui_browse_properties_scheme_color",
+        "type": "color",
+        "value": "0 0 0"
+      },
+      "starbrightness": {
+        "fraction": true,
+        "max": 2.0,
+        "min": 0.4,
+        "order": 1,
+        "precision": 2,
+        "text": "Star Brightness",
+        "type": "slider",
+        "value": 1.15
+      },
+      "effectsintensity": {
+        "fraction": true,
+        "max": 1.8,
+        "min": 0.0,
+        "order": 2,
+        "precision": 2,
+        "text": "Star Effects",
+        "type": "slider",
+        "value": 1.0
+      },
+      "lineopacity": {
+        "fraction": true,
+        "max": 2.0,
+        "min": 0.2,
+        "order": 3,
+        "precision": 2,
+        "text": "Constellation Lines",
+        "type": "slider",
+        "value": 1.0
+      },
+      "audioreactivity": {
+        "fraction": true,
+        "max": 2.0,
+        "min": 0.0,
+        "order": 4,
+        "precision": 2,
+        "text": "Audio Reactivity",
+        "type": "slider",
+        "value": 1.0
+      },
+      "softwordlimit": {
+        "fraction": false,
+        "max": 40,
+        "min": 6,
+        "order": 5,
+        "text": "Words per Constellation",
+        "type": "slider",
+        "value": 16
+      },
+      "rotationspeed": {
+        "fraction": true,
+        "max": 2.0,
+        "min": 0.5,
+        "order": 6,
+        "precision": 2,
+        "text": "Hemisphere Rotation Speed",
+        "type": "slider",
+        "value": 1.0
+      },
+      "zoom": {
+        "fraction": true,
+        "max": 2.4,
+        "min": 0.45,
+        "order": 7,
+        "precision": 2,
+        "text": "Sky Zoom",
+        "type": "slider",
+        "value": 1.0
+      },
+      "wordfontsize": {
+        "fraction": false,
+        "max": 28,
+        "min": 14,
+        "order": 8,
+        "text": "Word Size (px)",
+        "type": "slider",
+        "value": 20
+      },
+      "lyricdecay": {
+        "fraction": true,
+        "max": 8.0,
+        "min": 0.5,
+        "order": 9,
+        "precision": 2,
+        "text": "Paused Lyric Decay (s)",
+        "type": "slider",
+        "value": 2.5
+      },
+      "showlabels": {
+        "order": 10,
+        "text": "Constellation Names",
+        "type": "bool",
+        "value": true
+      },
+      "showfactcard": {
+        "order": 11,
+        "text": "Constellation Fact Box",
+        "type": "bool",
+        "value": true
+      },
+      "showbottomline": {
+        "order": 12,
+        "text": "Bottom Apple Music Lyric Line",
+        "type": "bool",
+        "value": true
+      },
+      "showplayercontrols": {
+        "order": 13,
+        "text": "Bottom Player Status Bar",
+        "type": "bool",
+        "value": false
+      },
+      "showdeepsky": {
+        "order": 14,
+        "text": "Deep-Sky Objects & Live Planets",
+        "type": "bool",
+        "value": true
+      },
+      "showsatellites": {
+        "order": 15,
+        "text": "Satellites & Voyagers",
+        "type": "bool",
+        "value": true
+      },
+      "instrumentalmode": {
+        "order": 16,
+        "text": "Instrumental Solo Mode",
+        "type": "bool",
+        "value": true
+      },
+      "hoverinspector": {
+        "order": 17,
+        "text": "Hover Star Inspector",
+        "type": "bool",
+        "value": true
+      },
+      "proportionalsizes": {
+        "order": 18,
+        "text": "Proportional Celestial Sizes",
+        "type": "bool",
+        "value": false
+      },
+      "freeexplore": {
+        "order": 19,
+        "text": "Free Explore / Drag Mode",
+        "type": "bool",
+        "value": false
+      },
+      "fontpreset": {
+        "options": [
+          { "label": "System UI", "value": "system" },
+          { "label": "Celestial Serif", "value": "serif" },
+          { "label": "Poetic Italic", "value": "italic" },
+          { "label": "Modern Sans", "value": "geometric" },
+          { "label": "Minimal Mono", "value": "mono" },
+          { "label": "Cinematic Display", "value": "cinematic" },
+          { "label": "Editorial Garamond", "value": "editorial" },
+          { "label": "Noir Serif", "value": "highcontrast" },
+          { "label": "Classic Cambria", "value": "book" },
+          { "label": "Soft Humanist", "value": "humanist" },
+          { "label": "Orbital Geometric", "value": "futuristic" },
+          { "label": "Telemetry Condensed", "value": "condensed" },
+          { "label": "Astral Light", "value": "wide" },
+          { "label": "Sleek Italic Sans", "value": "italicSans" },
+          { "label": "Starlight Script", "value": "script" },
+          { "label": "Midnight Ink", "value": "handwritten" },
+          { "label": "Observatory Code", "value": "code" }
+        ],
+        "order": 20,
+        "text": "Font Style",
+        "type": "combo",
+        "value": "system"
+      },
+      "lyricpreferred": {
+        "options": [
+          { "label": "Auto (Best Synced)", "value": "auto" },
+          { "label": "Limusic (via Boidu)", "value": "limusic" },
+          { "label": "Boidu (Better Lyrics)", "value": "boidu" },
+          { "label": "Unison", "value": "unison" },
+          { "label": "LyricsPlus", "value": "lyricsplus" },
+          { "label": "LRCLIB", "value": "lrclib" },
+          { "label": "YouTube Music", "value": "ytmusic" },
+          { "label": "Netease Cloud Music", "value": "netease" },
+          { "label": "QQ Music", "value": "qqmusic" },
+          { "label": "Kugou", "value": "kugou" }
+        ],
+        "order": 21,
+        "text": "Preferred Lyric Provider",
+        "type": "combo",
+        "value": "auto"
+      },
+      "demomode": {
+        "order": 22,
+        "text": "Demo Mode (when paused)",
+        "type": "bool",
+        "value": false
+      },
+      "wordeffect": {
+        "options": [
+          { "label": "Fade Up (Classic Rise)", "value": "rise" },
+          { "label": "Clean Fade (Pure Opacity)", "value": "fade" },
+          { "label": "Drift Out (Radiate Away)", "value": "drift" },
+          { "label": "Starburst Pop (Scale Accent)", "value": "pulse" },
+          { "label": "Stellar Shimmer (Halo Breath)", "value": "glow" }
+        ],
+        "order": 23,
+        "text": "Lyric Animation Effect",
+        "type": "combo",
+        "value": "rise"
+      }
+    },
+    "supportsaudioprocessing": true
+  },
+  "title": "Starlight — 88 Constellations & Synced Lyrics",
+  "type": "web",
+  "version": 1
+}

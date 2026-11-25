@@ -1,0 +1,298 @@
+mod audio;
+mod lyrics;
+mod smtc;
+mod wallpaper;
+
+use lyrics::{LyricProviderPrefs, LyricsPayload, LyricsService};
+use serde::Serialize;
+use smtc::{create_session_manager, poll_session, MediaState};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitialState {
+    pub media: MediaState,
+    pub lyrics: LyricsPayload,
+    pub lyrics_loading: bool,
+    pub wallpaper_mode: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LyricsLoadingEvent {
+    track_key: String,
+    title: String,
+    artist: String,
+}
+
+struct SharedState {
+    media: MediaState,
+    lyrics: LyricsPayload,
+    lyrics_loading: bool,
+    current_track_key: String,
+}
+
+struct AppContext {
+    shared: Arc<Mutex<SharedState>>,
+    lyrics_service: Arc<LyricsService>,
+    wallpaper_mode: bool,
+}
+
+#[tauri::command]
+fn get_initial_state(ctx: State<'_, AppContext>) -> InitialState {
+    let guard = ctx.shared.lock().unwrap();
+    InitialState {
+        media: guard.media.clone(),
+        lyrics: guard.lyrics.clone(),
+        lyrics_loading: guard.lyrics_loading,
+        wallpaper_mode: ctx.wallpaper_mode,
+    }
+}
+
+#[tauri::command]
+async fn refresh_lyrics(app: AppHandle, ctx: State<'_, AppContext>) -> Result<(), String> {
+    let media = {
+        let mut guard = ctx.shared.lock().unwrap();
+        if guard.media.track_key().is_empty() {
+            return Ok(());
+        }
+        guard.lyrics_loading = true;
+        guard.media.clone()
+    };
+
+    let track_key = media.track_key();
+    ctx.lyrics_service.invalidate(&track_key).await;
+    spawn_lyrics_lookup(
+        app,
+        ctx.shared.clone(),
+        ctx.lyrics_service.clone(),
+        media,
+    );
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_lyric_prefs(
+    app: AppHandle,
+    ctx: State<'_, AppContext>,
+    prefs: LyricProviderPrefs,
+) -> Result<(), String> {
+    ctx.lyrics_service.set_prefs(prefs).await;
+    let media_opt = {
+        let mut guard = ctx.shared.lock().unwrap();
+        if guard.media.track_key().is_empty() {
+            None
+        } else {
+            guard.lyrics = LyricsPayload::empty(guard.media.track_key());
+            guard.lyrics_loading = true;
+            Some(guard.media.clone())
+        }
+    };
+    if let Some(media) = media_opt {
+        spawn_lyrics_lookup(app, ctx.shared.clone(), ctx.lyrics_service.clone(), media);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn media_control(action: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || smtc::control_playback(&action))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn media_seek(position_sec: f64) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || smtc::seek_playback(position_sec))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn spawn_lyrics_lookup(
+    app: AppHandle,
+    shared: Arc<Mutex<SharedState>>,
+    lyrics_service: Arc<LyricsService>,
+    media: MediaState,
+) {
+    let track_key = media.track_key();
+    if track_key.is_empty() {
+        return;
+    }
+
+    eprintln!(
+        "[starlight] lyrics lookup started: '{}' by '{}' (dur={:.1}s)",
+        media.title, media.artist, media.end_sec
+    );
+
+    {
+        let mut guard = shared.lock().unwrap();
+        guard.lyrics_loading = true;
+    }
+
+    let loading_evt = LyricsLoadingEvent {
+        track_key: track_key.clone(),
+        title: media.title.clone(),
+        artist: media.artist.clone(),
+    };
+    let _ = app.emit("lyrics-loading", &loading_evt);
+
+    tauri::async_runtime::spawn(async move {
+        let payload = lyrics_service
+            .fetch_lyrics(
+                &track_key,
+                &media.title,
+                &media.artist,
+                &media.album,
+                media.end_sec,
+            )
+            .await;
+
+        eprintln!(
+            "[starlight] lyrics lookup finished: key='{}' found={} synced={} word_synced={} lines={} source={}",
+            track_key,
+            payload.found,
+            payload.synced,
+            payload.word_synced,
+            payload.lines.len(),
+            payload.source
+        );
+
+        let should_emit = {
+            let mut guard = shared.lock().unwrap();
+            if guard.current_track_key == track_key {
+                guard.lyrics = payload.clone();
+                guard.lyrics_loading = false;
+                true
+            } else {
+                false
+            }
+        };
+
+        if should_emit {
+            let _ = app.emit("lyrics-update", &payload);
+        }
+    });
+}
+
+fn start_smtc_thread(
+    app: AppHandle,
+    shared: Arc<Mutex<SharedState>>,
+    lyrics_service: Arc<LyricsService>,
+) {
+    std::thread::spawn(move || {
+        let mut manager = None;
+        let mut last_emitted = MediaState::empty(0);
+        let mut last_heartbeat = Instant::now();
+
+        loop {
+            if manager.is_none() {
+                match create_session_manager() {
+                    Ok(mgr) => manager = Some(mgr),
+                    Err(_) => {
+                        std::thread::sleep(Duration::from_millis(1200));
+                        continue;
+                    }
+                }
+            }
+
+            let state = match manager.as_ref() {
+                Some(mgr) => poll_session(mgr),
+                None => MediaState::empty(smtc::now_unix_ms()),
+            };
+
+            let track_key = state.track_key();
+            let mut track_changed = false;
+
+            {
+                let mut guard = shared.lock().unwrap();
+                guard.media = state.clone();
+                if guard.current_track_key != track_key {
+                    guard.current_track_key = track_key.clone();
+                    guard.lyrics = LyricsPayload::empty(track_key.clone());
+                    guard.lyrics_loading = !track_key.is_empty();
+                    track_changed = true;
+                }
+            }
+
+            let heartbeat_due =
+                state.status == "Playing" && last_heartbeat.elapsed() >= Duration::from_millis(1200);
+
+            if state.changed_from(&last_emitted) || heartbeat_due {
+                let _ = app.emit("media-update", &state);
+                last_emitted = state.clone();
+                last_heartbeat = Instant::now();
+            }
+
+            if track_changed {
+                if track_key.is_empty() {
+                    let empty = LyricsPayload::empty(String::new());
+                    let _ = app.emit("lyrics-update", &empty);
+                } else {
+                    spawn_lyrics_lookup(
+                        app.clone(),
+                        shared.clone(),
+                        lyrics_service.clone(),
+                        state,
+                    );
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    });
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let args: Vec<String> = std::env::args().collect();
+    let wallpaper_mode = args.iter().any(|a| a == "--wallpaper" || a == "-w");
+
+    let shared = Arc::new(Mutex::new(SharedState {
+        media: MediaState::empty(0),
+        lyrics: LyricsPayload::empty(String::new()),
+        lyrics_loading: false,
+        current_track_key: String::new(),
+    }));
+    let lyrics_service = Arc::new(LyricsService::new());
+
+    let ctx = AppContext {
+        shared: shared.clone(),
+        lyrics_service: lyrics_service.clone(),
+        wallpaper_mode,
+    };
+
+    tauri::Builder::default()
+        .manage(ctx)
+        .invoke_handler(tauri::generate_handler![
+            get_initial_state,
+            refresh_lyrics,
+            set_lyric_prefs,
+            media_control,
+            media_seek
+        ])
+        .setup(move |app| {
+            let handle = app.handle().clone();
+
+            if let Some(window) = app.get_webview_window("main") {
+                if wallpaper_mode {
+                    let _ = window.set_skip_taskbar(true);
+                    let _ = window.set_decorations(false);
+                    let _ = window.show();
+                    if let Ok(hwnd) = window.hwnd() {
+                        wallpaper::attach_to_desktop(hwnd.0 as isize);
+                    }
+                } else {
+                    let _ = window.show();
+                }
+            }
+
+            start_smtc_thread(handle.clone(), shared.clone(), lyrics_service.clone());
+            audio::start_wasapi_thread(handle);
+
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running Starlight");
+}

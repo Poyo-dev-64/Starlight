@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Starlight</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <canvas id="sky" aria-label="Starlight constellation music visualizer"></canvas>
+
+  <header id="hud-top" class="hud hud-top" data-tauri-drag-region>
+    <div class="now-playing" data-tauri-drag-region>
+      <span id="status-dot" class="status-dot" aria-hidden="true"></span>
+      <div class="track-meta" data-tauri-drag-region>
+        <div id="track-title" class="track-title">Waiting for music…</div>
+        <div id="track-artist" class="track-artist">Play any song on Windows, or press D for demo</div>
+      </div>
+      <span id="lyric-badge" class="lyric-badge">IDLE</span>
+    </div>
+
+    <div class="window-controls">
+      <button id="btn-constellation" class="ctrl-btn" title="Next Constellation (N)" aria-label="Next Constellation">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.6 4.2 4.4.4-3.4 2.9 1 4.4L8 11.1l-3.6 2.3 1-4.4-3.4-2.9 4.4-.4z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+      </button>
+      <button id="btn-explore" class="ctrl-btn" title="Free Explore / Drag Mode (E)" aria-label="Toggle Free Explore Drag Mode">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.8" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M5.6 10.4l1.5-3.3 3.3-1.5-1.5 3.3z" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="btn-demo" class="ctrl-btn" title="Toggle Demo (D)" aria-label="Toggle Demo">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3.2v9.6l8-4.8z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="btn-fact" class="ctrl-btn" title="Constellation Fact Box (F)" aria-label="Toggle Constellation Fact Box">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 7.2v4M8 4.8v.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+      <button id="btn-settings" class="ctrl-btn" title="Customize & QoL (S)" aria-label="Open Customization Settings">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 1.8v1.5M8 12.7v1.5M1.8 8h1.5M12.7 8h1.5M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      </button>
+      <button id="btn-fullscreen" class="ctrl-btn" title="Fullscreen (F11)" aria-label="Toggle Fullscreen">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5.5v-3h3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      </button>
+      <button id="btn-min" class="ctrl-btn" title="Minimize" aria-label="Minimize Window">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5h9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </button>
+      <button id="btn-max" class="ctrl-btn" title="Maximize" aria-label="Maximize Window">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+      </button>
+      <button id="btn-close" class="ctrl-btn ctrl-close" title="Close" aria-label="Close Window">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <aside id="settings-drawer" class="settings-drawer" aria-label="Customization and QoL Settings" aria-hidden="true">
+    <div class="drawer-header">
+      <div class="drawer-title">Starlight Settings</div>
+      <button id="btn-close-settings" class="ctrl-btn" title="Close Settings (S / Esc)" aria-label="Close Settings">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+
+    <div class="drawer-body">
+      <section class="setting-group">
+        <div class="group-title">Visuals &amp; Stars</div>
+
+        <label class="range-row" for="opt-brightness">
+          <div class="range-head"><span>Star Brightness</span><span id="val-brightness" class="range-val">1.15×</span></div>
+          <input id="opt-brightness" type="range" min="0.4" max="2.0" step="0.05" value="1.15" />
+        </label>
+
+        <label class="range-row" for="opt-effects">
+          <div class="range-head"><span>Star Effects</span><span id="val-effects" class="range-val">1.00×</span></div>
+          <input id="opt-effects" type="range" min="0.0" max="1.8" step="0.05" value="1.0" />
+        </label>
+
+        <label class="range-row" for="opt-lines">
+          <div class="range-head"><span>Constellation Lines</span><span id="val-lines" class="range-val">1.00×</span></div>
+          <input id="opt-lines" type="range" min="0.2" max="2.0" step="0.05" value="1.0" />
+        </label>
+
+        <label class="range-row" for="opt-audio">
+          <div class="range-head"><span>Audio Reactivity</span><span id="val-audio" class="range-val">1.00×</span></div>
+          <input id="opt-audio" type="range" min="0.0" max="2.0" step="0.05" value="1.0" />
+        </label>
+
+        <label class="range-row" for="opt-word-size">
+          <div class="range-head"><span>Word Size</span><span id="val-word-size" class="range-val">20px</span></div>
+          <input id="opt-word-size" type="range" min="14" max="28" step="1" value="20" />
+        </label>
+
+        <label class="range-row" for="opt-lyric-decay">
+          <div class="range-head"><span>Paused Lyric Decay</span><span id="val-lyric-decay" class="range-val">2.5s</span></div>
+          <input id="opt-lyric-decay" type="range" min="0.5" max="8.0" step="0.25" value="2.5" />
+        </label>
+
+        <div class="select-row">
+          <label for="opt-word-effect" class="select-label">Lyric Animation Effect</label>
+          <select id="opt-word-effect" class="select-input">
+            <option value="rise" selected>Fade Up (Classic Rise)</option>
+            <option value="fade">Clean Fade (Pure Opacity)</option>
+            <option value="drift">Drift Out (Radiate Away)</option>
+            <option value="pulse">Starburst Pop (Scale Accent)</option>
+            <option value="glow">Stellar Shimmer (Halo Breath)</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="setting-group">
+        <div class="group-title">Constellation Hemisphere</div>
+
+        <label class="range-row" for="opt-word-limit">
+          <div class="range-head"><span>Words per Constellation</span><span id="val-word-limit" class="range-val">16 words</span></div>
+          <input id="opt-word-limit" type="range" min="6" max="40" step="1" value="16" />
+        </label>
+
+        <label class="range-row" for="opt-rot-speed">
+          <div class="range-head"><span>Rotation Speed</span><span id="val-rot-speed" class="range-val">1.00×</span></div>
+          <input id="opt-rot-speed" type="range" min="0.5" max="2.0" step="0.05" value="1.0" />
+        </label>
+
+        <label class="range-row" for="opt-zoom">
+          <div class="range-head"><span>Sky Zoom</span><span id="val-zoom" class="range-val">1.00×</span></div>
+          <input id="opt-zoom" type="range" min="0.45" max="2.4" step="0.05" value="1.0" />
+        </label>
+
+        <div class="select-row">
+          <label for="opt-constellation" class="select-label">Active Constellation</label>
+          <select id="opt-constellation" class="select-input"></select>
+          <div class="btn-row">
+            <button id="btn-prev-const" class="pill-btn" type="button">← Prev (P)</button>
+            <button id="btn-next-const" class="pill-btn" type="button">Next (N) →</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="setting-group">
+        <div class="group-title">Quality of Life</div>
+
+        <label class="toggle-row" for="opt-always-on-top">
+          <input id="opt-always-on-top" type="checkbox" />
+          <span>Always on Top <kbd>T</kbd></span>
+        </label>
+
+        <label class="toggle-row" for="opt-show-names">
+          <input id="opt-show-names" type="checkbox" checked />
+          <span>Constellation Names <kbd>C</kbd></span>
+        </label>
+
+        <label class="toggle-row" for="opt-fact-card">
+          <input id="opt-fact-card" type="checkbox" checked />
+          <span>Constellation Fact Box <kbd>F</kbd></span>
+        </label>
+
+        <label class="toggle-row" for="opt-bottom-line">
+          <input id="opt-bottom-line" type="checkbox" />
+          <span>Bottom Reference Line <kbd>L</kbd></span>
+        </label>
+
+        <label class="toggle-row" for="opt-deep-sky">
+          <input id="opt-deep-sky" type="checkbox" checked />
+          <span>Deep-Sky &amp; Live Planets</span>
+        </label>
+
+        <label class="toggle-row" for="opt-satellites">
+          <input id="opt-satellites" type="checkbox" checked />
+          <span>Satellites &amp; Voyagers</span>
+        </label>
+
+        <label class="toggle-row" for="opt-instrumental">
+          <input id="opt-instrumental" type="checkbox" checked />
+          <span>Instrumental Solo Mode</span>
+        </label>
+
+        <label class="toggle-row" for="opt-hover-inspector">
+          <input id="opt-hover-inspector" type="checkbox" checked />
+          <span>Hover Star Inspector</span>
+        </label>
+
+        <label class="toggle-row" for="opt-proportional-sizes">
+          <input id="opt-proportional-sizes" type="checkbox" />
+          <span>Proportional Celestial Sizes</span>
+        </label>
+
+        <label class="toggle-row" for="opt-free-explore">
+          <input id="opt-free-explore" type="checkbox" />
+          <span>Free Explore / Drag Mode <kbd>E</kbd></span>
+        </label>
+
+        <label class="toggle-row" for="opt-player-controls">
+          <input id="opt-player-controls" type="checkbox" checked />
+          <span>Player Controls <kbd>M</kbd></span>
+        </label>
+
+        <label class="toggle-row" for="opt-demo-mode">
+          <input id="opt-demo-mode" type="checkbox" />
+          <span>Demo Mode <kbd>D</kbd></span>
+        </label>
+
+        <div class="offset-row">
+          <div class="range-head"><span>Lyric Sync Offset</span><span id="val-offset" class="range-val">0.0s</span></div>
+          <div class="btn-row">
+            <button id="btn-offset-minus" class="pill-btn" type="button">-0.2s</button>
+            <button id="btn-offset-reset" class="pill-btn" type="button">Reset (0)</button>
+            <button id="btn-offset-plus" class="pill-btn" type="button">+0.2s</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="setting-group">
+        <div class="group-title">Lyric Providers</div>
+
+        <div class="select-row">
+          <label for="opt-lyric-preferred" class="select-label">Preferred Source</label>
+          <select id="opt-lyric-preferred" class="select-input">
+            <option value="auto">Auto (Best Synced)</option>
+            <option value="limusic">Limusic (via Boidu)</option>
+            <option value="boidu">Boidu (Better Lyrics)</option>
+            <option value="unison">Unison</option>
+            <option value="lyricsplus">LyricsPlus</option>
+            <option value="lrclib">LRCLIB</option>
+            <option value="ytmusic">YouTube Music</option>
+            <option value="netease">Netease Cloud Music</option>
+            <option value="qqmusic">QQ Music</option>
+            <option value="kugou">Kugou</option>
+          </select>
+        </div>
+
+        <label class="toggle-row" for="opt-prov-limusic">
+          <input id="opt-prov-limusic" type="checkbox" checked />
+          <span>Limusic (via Boidu)</span>
+        </label>
+
+        <label class="toggle-row" for="opt-prov-boidu">
+          <input id="opt-prov-boidu" type="checkbox" checked />
+          <span>Boidu (Better Lyrics)</span>
+        </label>
+
+        <label class="toggle-row" for="opt-prov-unison">
+          <input id="opt-prov-unison" type="checkbox" checked />
+          <span>Unison</span>
+        </label>
+
+        <label class="toggle-row" for="opt-prov-lyricsplus">
+          <input id="opt-prov-lyricsplus" type="checkbox" checked />
+          <span>LyricsPlus</span>
+        </label>
+
+        <label class="toggle-row" for="opt-prov-lrclib">
+          <input id="opt-prov-lrclib" type="checkbox" checked />
+          <span>LRCLIB</span>
+        </label>
+
+        <label class="toggle-row" for="opt-prov-ytmusic">
+          <input id="opt-prov-ytmusic" type="checkbox" checked />
+          <span>YouTube Music</span>
+        </label>
+
+        <label class="toggle-row" for="opt-prov-netease">
+          <input id="opt-prov-netease" type="checkbox" checked />
+          <span>Netease Cloud Music</span>
+        </label>
+
+        <label class="toggle-row" for="opt-prov-qqmusic">
+          <input id="opt-prov-qqmusic" type="checkbox" checked />
+          <span>QQ Music</span>
+        </label>
+
+        <label class="toggle-row" for="opt-prov-kugou">
+          <input id="opt-prov-kugou" type="checkbox" checked />
+          <span>Kugou</span>
+        </label>
+
+        <div class="btn-row">
+          <button id="btn-refresh-lyrics" class="pill-btn" type="button">Re-search Lyrics (R)</button>
+        </div>
+      </section>
+
+      <section class="setting-group">
+        <div class="group-title">Typography &amp; Fonts</div>
+
+        <div class="select-row">
+          <label for="opt-font-preset" class="select-label">Font Style</label>
+          <select id="opt-font-preset" class="select-input">
+            <option value="system">System UI (Cross-Browser)</option>
+            <option value="serif">Celestial Serif</option>
+            <option value="italic">Poetic Italic</option>
+            <option value="geometric">Modern Sans</option>
+            <option value="mono">Minimal Mono</option>
+            <option value="cinematic">Cinematic Display</option>
+            <option value="editorial">Editorial Garamond</option>
+            <option value="highcontrast">Noir Serif</option>
+            <option value="book">Classic Cambria</option>
+            <option value="humanist">Soft Humanist</option>
+            <option value="futuristic">Orbital Geometric</option>
+            <option value="condensed">Telemetry Condensed</option>
+            <option value="wide">Astral Light</option>
+            <option value="italicSans">Sleek Italic Sans</option>
+            <option value="script">Starlight Script</option>
+            <option value="handwritten">Midnight Ink</option>
+            <option value="code">Observatory Code</option>
+            <option value="custom">Custom Font</option>
+          </select>
+        </div>
+
+        <div class="select-row">
+          <label for="opt-custom-font-name" class="select-label">Custom Font Family</label>
+          <input id="opt-custom-font-name" class="text-input" type="text" placeholder="e.g. Playfair Display, JetBrains Mono" autocomplete="off" />
+        </div>
+
+        <div class="select-row">
+          <div class="range-head"><span>Load Font File (.ttf/.otf/.woff2)</span><span id="val-font-file" class="range-val">None</span></div>
+          <div class="btn-row">
+            <label for="opt-font-file" class="pill-btn file-btn">Choose File…<input id="opt-font-file" type="file" accept=".ttf,.otf,.woff,.woff2" class="sr-file" /></label>
+            <button id="btn-clear-font" class="pill-btn" type="button">Clear</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="drawer-footer">
+        <button id="btn-reset-defaults" class="pill-btn pill-btn-wide" type="button">Reset Defaults</button>
+      </div>
+    </div>
+  </aside>
+
+  <section id="fact-card" class="fact-card" role="dialog" aria-label="Constellation Fact">
+    <div class="fact-header">
+      <div class="fact-title-wrap">
+        <span class="fact-star" aria-hidden="true">✦</span>
+        <span id="fact-title" class="fact-title">ORION · THE HUNTER</span>
+      </div>
+      <button id="btn-close-fact" class="fact-close" title="Hide Fact Box (F)" aria-label="Hide Constellation Fact Box">×</button>
+    </div>
+    <p id="fact-text" class="fact-text"></p>
+  </section>
+
+  <div id="star-inspector" class="star-inspector hidden" role="status" aria-live="off">
+    <div class="insp-head">
+      <span id="insp-dot" class="insp-dot" aria-hidden="true"></span>
+      <span id="insp-name" class="insp-name"></span>
+      <span id="insp-kind" class="insp-kind"></span>
+    </div>
+    <div id="insp-meta" class="insp-meta"></div>
+    <p id="insp-note" class="insp-note"></p>
+  </div>
+
+  <div id="bottom-line-wrap" class="bottom-line-wrap hidden" aria-live="polite">
+    <div id="bottom-line" class="bottom-line"></div>
+    <div id="bottom-line-next" class="bottom-line-next"></div>
+  </div>
+
+  <section id="player-bar" class="player-bar" role="region" aria-label="Media Player Status and Controls">
+    <div class="player-bar-main">
+      <div class="player-bar-track">
+        <img id="player-art" class="player-art hidden" alt="" />
+        <span id="player-status-dot" class="status-dot" aria-hidden="true"></span>
+        <div class="player-bar-meta">
+          <div id="player-title" class="player-bar-title">Waiting for music…</div>
+          <div id="player-artist" class="player-bar-artist">Play any song on Windows, or press D for demo</div>
+        </div>
+      </div>
+
+      <div class="player-bar-buttons" role="group" aria-label="Playback Controls">
+        <button id="btn-media-prev" class="player-btn" title="Previous Track" aria-label="Previous Track">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3.5v9M12.2 3.8L6.2 8l6 4.2z" fill="currentColor" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/></svg>
+        </button>
+        <button id="btn-media-play" class="player-btn player-btn-play" title="Play / Pause" aria-label="Play or Pause">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path class="icon-play" d="M5 3.3l7.5 4.7L5 12.7z" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
+            <path class="icon-pause" d="M5 3.5h2.2v9H5zM9.3 3.5h2.2v9H9.3z" fill="currentColor"/>
+          </svg>
+        </button>
+        <button id="btn-media-next" class="player-btn" title="Next Track" aria-label="Next Track">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12 3.5v9M3.8 3.8L9.8 8l-6 4.2z" fill="currentColor" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+
+      <div class="player-bar-right">
+        <div class="player-audio-controls" role="group" aria-label="Audio Reactivity Controls">
+          <button id="btn-player-mute" class="player-btn player-btn-audio" title="Mute / Unmute Audio Reactivity" aria-label="Toggle Audio Reactivity">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3 6.2h2.6L9 3.4v9.2L5.6 9.8H3z" fill="currentColor" stroke="currentColor" stroke-width="0.9" stroke-linejoin="round"/>
+              <path class="icon-waves" d="M11.1 5.5a3.4 3.4 0 0 1 0 5M12.9 3.8a5.6 5.6 0 0 1 0 8.4" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+              <path class="icon-muted" d="M11 6l3 4M14 6l-3 4" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <input id="player-audio-gain" class="player-audio-slider" type="range" min="0" max="2" step="0.05" value="1" title="Audio Reactivity Gain" aria-label="Audio Reactivity Gain" />
+        </div>
+        <span id="player-source-badge" class="lyric-badge">IDLE</span>
+      </div>
+    </div>
+
+    <div class="player-bar-progress">
+      <span id="player-time-cur" class="player-time">0:00</span>
+      <input id="player-seek" class="player-seek" type="range" min="0" max="100" step="0.5" value="0" aria-label="Playback Progress" />
+      <span id="player-time-dur" class="player-time">0:00</span>
+    </div>
+  </section>
+
+  <footer id="hud-bottom" class="hud hud-bottom">
+    <div id="toast" class="toast" aria-live="polite"></div>
+    <div class="hints">
+      <span><kbd>S</kbd> Settings</span>
+      <span><kbd>E</kbd> Explore</span>
+      <span><kbd>M</kbd> Media</span>
+      <span><kbd>F</kbd> Fact</span>
+      <span><kbd>P</kbd>/<kbd>N</kbd> Constellation</span>
+      <span><kbd>+</kbd>/<kbd>-</kbd> Zoom</span>
+      <span><kbd>T</kbd> Top</span>
+      <span><kbd>F11</kbd> Fullscreen</span>
+      <span><kbd>←</kbd>/<kbd>→</kbd> Sync</span>
+      <span><kbd>D</kbd> Demo</span>
+    </div>
+  </footer>
+
+  <script src="bundle.js"></script>
+</body>
+</html>
